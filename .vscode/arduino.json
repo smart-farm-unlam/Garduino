@@ -1,0 +1,5 @@
+{
+    "sketch": "examples/dht22/dht22.ino",
+    "output": "build",
+    "board": "arduino:avr:uno"
+}
