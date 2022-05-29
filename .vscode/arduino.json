@@ -1,5 +1,5 @@
 {
-    "sketch": "examples/dht22/dht22.ino",
+    "sketch": "examples/d1-wifi/d1-wifi.ino",
     "output": "build",
     "board": "arduino:avr:uno"
 }
