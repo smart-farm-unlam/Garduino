@@ -1,2 +1,2 @@
 # Garduino
-Repositorio para subir el código relacionado con el arduino
+Repositorio para subir el código relacionado con el microcontrolador ESP32
