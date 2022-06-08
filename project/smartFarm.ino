@@ -42,8 +42,8 @@ int soilMoistureValue_2 = 0;
 int soilMoisturePercent_2 = 0;
 int soilMoistureValue_3 = 0;
 int soilMoisturePercent_3 = 0;
-const int airValue = 3650;
-const int waterValue = 1250;
+const int airValue = 3700;
+const int waterValue = 1200;
 
 //-----------------------------------------------
 
