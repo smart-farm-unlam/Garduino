@@ -1,14 +1,21 @@
+//External Libraries
 #include <DHT.h>
 #include <ThingSpeak.h>
 #include <WiFi.h>
+//-----------------------------------------------
 
+//Constants
+//DHT22
 const int PIN_DHT = 33;
-
 DHT dht(PIN_DHT, DHT22);
+const int CANT_SAMPLES = 5;
 
+//WIFI Settings
 const char* ssid = "Movistar14";
 const char* password = "mate2306";
+WiFiClient client;
 
+//ThingSpeak keys
 unsigned long CHANNEL_ID = 1757253;
 const char* WRITE_API_KEY = "GS9K4RKUJ6IQZT7F";
 
@@ -16,7 +23,11 @@ const char* WRITE_API_KEY = "GS9K4RKUJ6IQZT7F";
 float temp = 0;
 float hum = 0;
 
-WiFiClient client;
+//Software timer
+const int MEASUREMENT_TIME = 15000;     //15 seconds
+unsigned long current_time, previous_time;
+
+//-----------------------------------------------
 
 void setup() {
     Serial.begin(115200);
@@ -32,30 +43,51 @@ void setup() {
     ThingSpeak.begin(client);
 
     dht.begin();
+
+    //software timer init
+    current_time = millis();
+    previous_time = millis();
 }
 
 void loop() {
-    readTemperatureAndHumidity();
+    current_time = millis();
 
-    sendDataToServer();
-    delay(14000);
+    if ((current_time - previous_time) > MEASUREMENT_TIME) {
+        Serial.println("-----------------------------------");
+        Serial.println("Start collecting data from sensors");
+        readTemperatureAndHumidity();
+        sendDataToServer();
+        previous_time = millis();
+    }
+    
 }
 
+//Error +-2.5%
 void readTemperatureAndHumidity() {
-    temp = dht.readTemperature();
-    hum = dht.readHumidity();
+    float temp_sum = 0;
+    float hum_sum = 0;
 
-    while(isnan(temp) || isnan(hum)) {
-        Serial.println("Failed read on DHT22 sensor, repeating read");
-        delay(2000);
-        temp = dht.readTemperature();
-        hum = dht.readHumidity();
+    for(int i = 0; i < CANT_SAMPLES; i++) {
+        delay(500); //0.5Hz between DHT22 samples
+        float temp_aux = dht.readTemperature();
+        float hum_aux = dht.readHumidity();
+
+        while(isnan(temp_aux) || isnan(hum_aux)) {
+            Serial.println("Failed read on DHT22 sensor, repeating read");
+            delay(2000);
+            temp_aux = dht.readTemperature();
+            hum_aux = dht.readHumidity();
+        }
+
+        temp_sum += temp_aux;
+        hum_sum += hum_aux;
     }
 
-    Serial.println("Temp: " + String(temp, 1) + "°C");
-    Serial.println("Hum: " + String(hum,1) + "%.");
+    temp = temp_sum / CANT_SAMPLES;
+    hum = hum_sum / CANT_SAMPLES;
 
-    Serial.println("------------------");
+    Serial.println("Temp: " + String(temp, 1) + "°C");
+    Serial.println("Hum: " + String(hum, 1) + "%");
 }
 
 void sendDataToServer() {
