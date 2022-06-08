@@ -5,8 +5,13 @@
 //-----------------------------------------------
 
 //Constants
-//DHT22
+//PINS
 const int PIN_DHT = 33;
+const int PIN_SOIL_MOISTURE_1 = 32;
+const int PIN_SOIL_MOISTURE_2 = 35;
+const int PIN_SOIL_MOISTURE_3 = 34;
+
+
 DHT dht(PIN_DHT, DHT22);
 const int CANT_SAMPLES = 5;
 
@@ -19,13 +24,26 @@ WiFiClient client;
 unsigned long CHANNEL_ID = 1757253;
 const char* WRITE_API_KEY = "GS9K4RKUJ6IQZT7F";
 
-//Values
-float temp = 0;
-float hum = 0;
-
 //Software timer
 const int MEASUREMENT_TIME = 15000;     //15 seconds
 unsigned long current_time, previous_time;
+
+//-----------------------------------------------
+
+//Values
+//DHT22
+float temp = 0;
+float hum = 0;
+
+//Capacitive soil moisture Sensor
+int soilMoistureValue_1 = 0;
+int soilMoisturePercent_1 = 0;
+int soilMoistureValue_2 = 0;
+int soilMoisturePercent_2 = 0;
+int soilMoistureValue_3 = 0;
+int soilMoisturePercent_3 = 0;
+const int airValue = 3650;
+const int waterValue = 1250;
 
 //-----------------------------------------------
 
@@ -56,6 +74,7 @@ void loop() {
         Serial.println("-----------------------------------");
         Serial.println("Start collecting data from sensors");
         readTemperatureAndHumidity();
+        readSoilMoistureSensors();
         sendDataToServer();
         previous_time = millis();
     }
@@ -90,11 +109,31 @@ void readTemperatureAndHumidity() {
     Serial.println("Hum: " + String(hum, 1) + "%");
 }
 
+void readSoilMoistureSensors() {
+    soilMoistureValue_1 = analogRead(PIN_SOIL_MOISTURE_1);
+    soilMoisturePercent_1 = map(soilMoistureValue_1, waterValue, airValue, 100, 0);
+    Serial.println("Humidity value 1: " + String(soilMoistureValue_1));
+    Serial.println("Soil Humidity percentage 1: " + String(soilMoisturePercent_1) + "%");
+
+    soilMoistureValue_2 = analogRead(PIN_SOIL_MOISTURE_2);
+    soilMoisturePercent_2 = map(soilMoistureValue_2, waterValue, airValue, 100, 0);
+    Serial.println("Humidity value 2: " + String(soilMoistureValue_2));
+    Serial.println("Soil Humidity percentage 2: " + String(soilMoisturePercent_2) + "%");
+
+    soilMoistureValue_3 = analogRead(PIN_SOIL_MOISTURE_3);
+    soilMoisturePercent_3 = map(soilMoistureValue_3, waterValue, airValue, 100, 0);
+    Serial.println("Humidity value 3: " + String(soilMoistureValue_3));
+    Serial.println("Soil Humidity percentage 3: " + String(soilMoisturePercent_3) + "%");
+}
+
 void sendDataToServer() {
     //TODO POST TO OUR SERVER
     ThingSpeak.setField(1, temp);
     ThingSpeak.setField(2, hum);
+    ThingSpeak.setField(3, soilMoisturePercent_1);
+    ThingSpeak.setField(4, soilMoisturePercent_2);
+    ThingSpeak.setField(5, soilMoisturePercent_3);
+
     ThingSpeak.writeFields(CHANNEL_ID, WRITE_API_KEY);
-    Serial.println("Data sent to ThingSpeak!");
-    
+    Serial.println(">> Data sent to ThingSpeak!");
 }
