@@ -2,18 +2,24 @@
 #include <DHT.h>
 #include <ThingSpeak.h>
 #include <WiFi.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 //-----------------------------------------------
 
 //Constants
 //PINS
 const int PIN_DHT = 33;
-const int PIN_SOIL_MOISTURE_1 = 32;
-const int PIN_SOIL_MOISTURE_2 = 35;
-const int PIN_SOIL_MOISTURE_3 = 34;
+const int PIN_SOIL_MOISTURE_1 = 35;
+const int PIN_SOIL_MOISTURE_2 = 34;
+const int PIN_SOIL_MOISTURE_3 = 39;
+const int PIN_DS18B20 = 32;
+const int TEMPERATURE_PRECISION = 9;
 
-
+//Sensor configuration
 DHT dht(PIN_DHT, DHT22);
-const int CANT_SAMPLES = 5;
+OneWire oneWire(PIN_DS18B20);
+DallasTemperature sensors(&oneWire);
+DeviceAddress first_thermometer, second_thermometer, third_thermometer;
 
 //WIFI Settings
 const char* ssid = "Movistar14";
@@ -31,20 +37,18 @@ unsigned long current_time, previous_time;
 //-----------------------------------------------
 
 //Values
+const int ERROR_VALUE = -99;
 //DHT22
-float temp = 0;
-float hum = 0;
+float temp = ERROR_VALUE;
+float hum = ERROR_VALUE;
 
 //Capacitive soil moisture Sensor
-int soilMoistureValue_1 = 0;
-int soilMoisturePercent_1 = 0;
-int soilMoistureValue_2 = 0;
-int soilMoisturePercent_2 = 0;
-int soilMoistureValue_3 = 0;
-int soilMoisturePercent_3 = 0;
-const int airValue = 3700;
-const int waterValue = 1200;
+int soil_moisture_percent_array[] = {ERROR_VALUE, ERROR_VALUE, ERROR_VALUE};
+const int AIR_VALUE = 3700;
+const int WATER_VALUE = 1200;
 
+//ds18b20 Moisture Sensor
+int soil_temperature_array[] = {ERROR_VALUE, ERROR_VALUE, ERROR_VALUE};
 //-----------------------------------------------
 
 void setup() {
@@ -60,8 +64,9 @@ void setup() {
 
     ThingSpeak.begin(client);
 
-    dht.begin();
-
+    //Sensors initialize
+    initializeSensors();
+    
     //software timer init
     current_time = millis();
     previous_time = millis();
@@ -75,6 +80,7 @@ void loop() {
         Serial.println("Start collecting data from sensors");
         readTemperatureAndHumidity();
         readSoilMoistureSensors();
+        readSoilTemperatureSensors();
         sendDataToServer();
         previous_time = millis();
     }
@@ -82,57 +88,107 @@ void loop() {
 }
 
 //Error +-2.5%
-void readTemperatureAndHumidity() {
-    float temp_sum = 0;
-    float hum_sum = 0;
+void readTemperatureAndHumidity() { 
+    temp = dht.readTemperature();
+    hum = dht.readHumidity();
 
-    for(int i = 0; i < CANT_SAMPLES; i++) {
-        delay(500); //0.5Hz between DHT22 samples
-        float temp_aux = dht.readTemperature();
-        float hum_aux = dht.readHumidity();
-
-        while(isnan(temp_aux) || isnan(hum_aux)) {
-            Serial.println("Failed read on DHT22 sensor, repeating read");
-            delay(2000);
-            temp_aux = dht.readTemperature();
-            hum_aux = dht.readHumidity();
-        }
-
-        temp_sum += temp_aux;
-        hum_sum += hum_aux;
+    if (isnan(temp) || isnan(hum)) {
+        temp = ERROR_VALUE;
+        hum = ERROR_VALUE;
     }
-
-    temp = temp_sum / CANT_SAMPLES;
-    hum = hum_sum / CANT_SAMPLES;
 
     Serial.println("Temp: " + String(temp, 1) + "°C");
     Serial.println("Hum: " + String(hum, 1) + "%");
 }
 
 void readSoilMoistureSensors() {
-    soilMoistureValue_1 = analogRead(PIN_SOIL_MOISTURE_1);
-    soilMoisturePercent_1 = map(soilMoistureValue_1, waterValue, airValue, 100, 0);
-    Serial.println("Humidity value 1: " + String(soilMoistureValue_1));
-    Serial.println("Soil Humidity percentage 1: " + String(soilMoisturePercent_1) + "%");
+    setSoilMoisture(PIN_SOIL_MOISTURE_1, 0);
+    setSoilMoisture(PIN_SOIL_MOISTURE_2, 1);
+    setSoilMoisture(PIN_SOIL_MOISTURE_3, 2);
+}
 
-    soilMoistureValue_2 = analogRead(PIN_SOIL_MOISTURE_2);
-    soilMoisturePercent_2 = map(soilMoistureValue_2, waterValue, airValue, 100, 0);
-    Serial.println("Humidity value 2: " + String(soilMoistureValue_2));
-    Serial.println("Soil Humidity percentage 2: " + String(soilMoisturePercent_2) + "%");
+void setSoilMoisture(int pin, int index) {
+    int soilMoistureValue = analogRead(pin);
+    int soilMoistureValuePercent = map(soilMoistureValue, WATER_VALUE, AIR_VALUE, 100, 0);
+    if (soilMoistureValuePercent < 0 || soilMoistureValuePercent > 100) {
+        soilMoistureValuePercent = ERROR_VALUE;
+    }
+    Serial.println("Humidity value " + String(index + 1) + ": " + String(soilMoistureValue));
+    Serial.println("Soil Humidity percentage "+ String(index + 1) + ": " + String(soilMoistureValuePercent) + "%");
+    soil_moisture_percent_array[index] = soilMoistureValuePercent;
+}
 
-    soilMoistureValue_3 = analogRead(PIN_SOIL_MOISTURE_3);
-    soilMoisturePercent_3 = map(soilMoistureValue_3, waterValue, airValue, 100, 0);
-    Serial.println("Humidity value 3: " + String(soilMoistureValue_3));
-    Serial.println("Soil Humidity percentage 3: " + String(soilMoisturePercent_3) + "%");
+void readSoilTemperatureSensors() {
+    sensors.requestTemperatures();
+    setSoilTemperature(first_thermometer, 0);
+    setSoilTemperature(second_thermometer, 1);
+    setSoilTemperature(third_thermometer, 2);
+}
+
+void setSoilTemperature(DeviceAddress deviceAddress, int index)
+{
+  float tempC = sensors.getTempC(deviceAddress);
+  if(tempC == DEVICE_DISCONNECTED_C) 
+  {
+    Serial.println("Error ["+ String(index + 1) + "]: Could not read temperature data");
+    tempC = ERROR_VALUE;
+  }
+  Serial.println("Temp " + String(index + 1) + ": " + String(tempC, 1) + "°C");
+  soil_temperature_array[index] = tempC;
+}
+
+void initializeSensors() {
+    //DHT22 init
+    dht.begin();    
+
+    //ds18b20 init
+    sensors.begin();
+    Serial.println("Locating ds18b20 devices...");
+    Serial.println("Found " + String(sensors.getDeviceCount()) + " devices");
+    if (!sensors.getAddress(first_thermometer, 0)) Serial.println("Unable to find address for Device 0");
+    if (!sensors.getAddress(second_thermometer, 1)) Serial.println("Unable to find address for Device 1");
+    if (!sensors.getAddress(third_thermometer, 2)) Serial.println("Unable to find address for Device 2");
+
+    // show the addresses we found on the bus
+    Serial.print("Device 0 Address: ");
+    printAddress(first_thermometer);
+    Serial.println();
+
+    Serial.print("Device 1 Address: ");
+    printAddress(second_thermometer);
+    Serial.println();
+
+    Serial.print("Device 2 Address: ");
+    printAddress(third_thermometer);
+    Serial.println();
+
+    // set the resolution to 9 bit per device
+    sensors.setResolution(first_thermometer, TEMPERATURE_PRECISION);
+    sensors.setResolution(second_thermometer, TEMPERATURE_PRECISION);
+    sensors.setResolution(third_thermometer, TEMPERATURE_PRECISION);
+}
+
+// function to print a device address
+void printAddress(DeviceAddress deviceAddress)
+{
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    // zero pad the address if necessary
+    if (deviceAddress[i] < 16) Serial.print("0");
+    Serial.print(deviceAddress[i], HEX);
+  }
 }
 
 void sendDataToServer() {
     //TODO POST TO OUR SERVER
     ThingSpeak.setField(1, temp);
     ThingSpeak.setField(2, hum);
-    ThingSpeak.setField(3, soilMoisturePercent_1);
-    ThingSpeak.setField(4, soilMoisturePercent_2);
-    ThingSpeak.setField(5, soilMoisturePercent_3);
+    ThingSpeak.setField(3, soil_moisture_percent_array[0]);
+    ThingSpeak.setField(4, soil_moisture_percent_array[1]);
+    ThingSpeak.setField(5, soil_moisture_percent_array[2]);
+    ThingSpeak.setField(6, soil_temperature_array[0]);
+    ThingSpeak.setField(7, soil_temperature_array[1]);
+    ThingSpeak.setField(8, soil_temperature_array[2]);
 
     ThingSpeak.writeFields(CHANNEL_ID, WRITE_API_KEY);
     Serial.println(">> Data sent to ThingSpeak!");
