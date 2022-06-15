@@ -6,7 +6,6 @@ const char* ssid = "********";
 const char* password = "********";
 char jsonOutput[128];
 
-
 void setup()
 {
     Serial.begin(115200);
@@ -28,20 +27,24 @@ void loop()
 {
     if ((WiFi.status() == WL_CONNECTED)) // Check the current connection status
     {
+        long rnd = random(1, 10);
         HTTPClient client;
 
-        client.begin("http://jsonplaceholder.typicode.com/posts");
+        client.begin("http://jsonplaceholder.typicode.com/posts/" + String(rnd));
         client.addHeader("Content-Type", "application/json");
 
-        const size_t CAPACITY = JSON_OBJECT_SIZE(1);
+        const size_t CAPACITY = JSON_OBJECT_SIZE(3);
         StaticJsonDocument<CAPACITY> doc;
 
-        JsonObject object = doc.to<JsonObject>();
-        object["title"] = "Subscribe to Asali";
+        JsonObject obj = doc.to<JsonObject>();
+        obj["id"] = rnd;
+        obj["title"] = "Subscribe to Asali";
+        obj["body"] = "Asali is a decent YT channel";
 
         serializeJson(doc, jsonOutput);
+        Serial.println(jsonOutput);
 
-        int httpCode = client.POST(String(jsonOutput));
+        int httpCode = client.PUT(String(jsonOutput));
 
         if (httpCode > 0)
         {
