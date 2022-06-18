@@ -4,6 +4,8 @@
 #include <WiFi.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 //-----------------------------------------------
 
 //Constants
@@ -22,8 +24,8 @@ DallasTemperature sensors(&oneWire);
 DeviceAddress first_thermometer, second_thermometer, third_thermometer;
 
 //WIFI Settings
-const char* ssid = "********";
-const char* password = "********";
+const char* ssid = "Movistar14";
+const char* password = "mate2306";
 WiFiClient client;
 
 //ThingSpeak keys
@@ -35,35 +37,69 @@ const int MEASUREMENT_TIME = 15000;     //15 seconds
 unsigned long current_time, previous_time;
 
 //-----------------------------------------------
-
 //Values
-const int ERROR_VALUE = -99;
+const double ERROR_VALUE = -99;
 //DHT22
 float temp = ERROR_VALUE;
 float hum = ERROR_VALUE;
 
-//Capacitive soil moisture Sensor
-int soil_moisture_percent_array[] = {ERROR_VALUE, ERROR_VALUE, ERROR_VALUE};
+//Capacitive soil moisture limit
 const int AIR_VALUE = 3700;
 const int WATER_VALUE = 1200;
-
-//ds18b20 Moisture Sensor
-int soil_temperature_array[] = {ERROR_VALUE, ERROR_VALUE, ERROR_VALUE};
 //-----------------------------------------------
+//Classes
+class Measure {
+    public: 
+        //time_t dateTime;
+        float value;
+
+    Measure() {
+        value = ERROR_VALUE;
+    }
+
+    Measure(double value) {
+        value = value;
+    }
+};
+
+class Sensor {
+    public:
+        std::string code;
+        Measure measure;
+    
+    Sensor(std::string value) {
+        code = value;
+        measure = Measure(ERROR_VALUE);
+    }
+
+    Sensor(std::string code, Measure measure) {
+        code = code;
+        measure = measure;
+    }
+};
+//----------------------------------------------
+//Events declaration
+Sensor tempSensor = Sensor("AT1");
+Sensor humiditySensor = Sensor("AH1");
+Sensor soilMoistureSensor1 = Sensor("SM1");
+Sensor soilMoistureSensor2 = Sensor("SM2");
+Sensor soilMoistureSensor3 = Sensor("SM3");
+Sensor soilTempSensor1 = Sensor("ST1") ;
+Sensor soilTempSensor2 = Sensor("ST2");
+Sensor soilTempSensor3 = Sensor("ST3");
+
+Sensor soilMoistureArray[] = {soilMoistureSensor1, soilMoistureSensor2, soilMoistureSensor3}; 
+Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor3, soilTempSensor3}; 
+
+//----------------------------------------------
 
 void setup() {
     Serial.begin(115200);
 
-    Serial.println("Trying to connect to wifi: ");
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println("WiFi connected!");
-
+    initWiFi();
+    
     ThingSpeak.begin(client);
-
+    
     //Sensors initialize
     initializeSensors();
     
@@ -81,10 +117,22 @@ void loop() {
         readTemperatureAndHumidity();
         readSoilMoistureSensors();
         readSoilTemperatureSensors();
+        //sendDataToThingSpeak();
         sendDataToServer();
         previous_time = millis();
     }
     
+}
+
+void initWiFi() {
+    WiFi.begin(ssid, password);
+    Serial.print("Connecting to WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+        Serial.print(".");
+        delay(500);
+    }
+    Serial.print("Connect to the WiFi network with IP: ");
+    Serial.println(WiFi.localIP());
 }
 
 //Error +-2.5%
@@ -99,30 +147,33 @@ void readTemperatureAndHumidity() {
 
     Serial.println("Temp: " + String(temp, 1) + "°C");
     Serial.println("Hum: " + String(hum, 1) + "%");
+
+    tempSensor.measure.value = temp;
+    humiditySensor.measure.value = hum;
 }
 
 void readSoilMoistureSensors() {
-    setSoilMoisture(PIN_SOIL_MOISTURE_1, 0);
-    setSoilMoisture(PIN_SOIL_MOISTURE_2, 1);
-    setSoilMoisture(PIN_SOIL_MOISTURE_3, 2);
+    setSoilMoisture(PIN_SOIL_MOISTURE_1, 1);
+    setSoilMoisture(PIN_SOIL_MOISTURE_2, 2);
+    setSoilMoisture(PIN_SOIL_MOISTURE_3, 3);
 }
 
 void setSoilMoisture(int pin, int index) {
     int soilMoistureValue = analogRead(pin);
     int soilMoistureValuePercent = map(soilMoistureValue, WATER_VALUE, AIR_VALUE, 100, 0);
-    if (soilMoistureValuePercent < 0 || soilMoistureValuePercent > 100) {
+    if (soilMoistureValuePercent <= 0 || soilMoistureValuePercent > 100) {
         soilMoistureValuePercent = ERROR_VALUE;
     }
-    Serial.println("Humidity value " + String(index + 1) + ": " + String(soilMoistureValue));
-    Serial.println("Soil Humidity percentage "+ String(index + 1) + ": " + String(soilMoistureValuePercent) + "%");
-    soil_moisture_percent_array[index] = soilMoistureValuePercent;
+    Serial.println("Humidity value " + String(index) + ": " + String(soilMoistureValue));
+    Serial.println("Soil Humidity percentage "+ String(index) + ": " + String(soilMoistureValuePercent) + "%");
+    soilMoistureArray[index-1].measure.value = soilMoistureValuePercent;
 }
 
 void readSoilTemperatureSensors() {
     sensors.requestTemperatures();
-    setSoilTemperature(first_thermometer, 0);
-    setSoilTemperature(second_thermometer, 1);
-    setSoilTemperature(third_thermometer, 2);
+    setSoilTemperature(first_thermometer, 1);
+    setSoilTemperature(second_thermometer, 2);
+    setSoilTemperature(third_thermometer, 3);
 }
 
 void setSoilTemperature(DeviceAddress deviceAddress, int index)
@@ -130,11 +181,11 @@ void setSoilTemperature(DeviceAddress deviceAddress, int index)
   float tempC = sensors.getTempC(deviceAddress);
   if(tempC == DEVICE_DISCONNECTED_C) 
   {
-    Serial.println("Error ["+ String(index + 1) + "]: Could not read temperature data");
+    Serial.println("Error ["+ String(index) + "]: Could not read temperature data");
     tempC = ERROR_VALUE;
   }
-  Serial.println("Temp " + String(index + 1) + ": " + String(tempC, 1) + "°C");
-  soil_temperature_array[index] = tempC;
+  Serial.println("Temp " + String(index) + ": " + String(tempC, 1) + "°C");
+  soilTemperatureArray[index-1].measure.value = tempC;
 }
 
 void initializeSensors() {
@@ -179,17 +230,65 @@ void printAddress(DeviceAddress deviceAddress)
   }
 }
 
-void sendDataToServer() {
-    //TODO POST TO OUR SERVER
+void sendDataToThingSpeak() {
     ThingSpeak.setField(1, temp);
     ThingSpeak.setField(2, hum);
-    ThingSpeak.setField(3, soil_moisture_percent_array[0]);
-    ThingSpeak.setField(4, soil_moisture_percent_array[1]);
-    ThingSpeak.setField(5, soil_moisture_percent_array[2]);
-    ThingSpeak.setField(6, soil_temperature_array[0]);
-    ThingSpeak.setField(7, soil_temperature_array[1]);
-    ThingSpeak.setField(8, soil_temperature_array[2]);
+    ThingSpeak.setField(3, soilMoistureArray[0].measure.value);
+    ThingSpeak.setField(4, soilMoistureArray[1].measure.value);
+    ThingSpeak.setField(5, soilMoistureArray[2].measure.value);
+    ThingSpeak.setField(6, soilTemperatureArray[0].measure.value);
+    ThingSpeak.setField(7, soilTemperatureArray[1].measure.value);
+    ThingSpeak.setField(8, soilTemperatureArray[2].measure.value);
 
     ThingSpeak.writeFields(CHANNEL_ID, WRITE_API_KEY);
     Serial.println(">> Data sent to ThingSpeak!");
+}
+
+void sendDataToServer() {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient client;
+
+        client.begin("http://192.168.1.45:8080/sensors/62acc77270752f2b6bbb88ee/events");
+        client.addHeader("Content-Type", "application/json");
+
+        char jsonOutput[1024];
+        StaticJsonDocument<1024> doc;
+        appendJsonObject(doc, tempSensor);
+        appendJsonObject(doc, humiditySensor);
+
+        for (Sensor sensorMoisture : soilMoistureArray) {
+            appendJsonObject(doc, sensorMoisture);
+
+        }
+        for (Sensor sensorTemperature : soilTemperatureArray) {
+            appendJsonObject(doc, sensorTemperature);
+
+        }
+
+        serializeJson(doc, jsonOutput);
+
+        Serial.println(jsonOutput);
+
+        int httpCode = client.POST(String(jsonOutput));
+
+        if (httpCode > 0) {
+            Serial.println("Status code: " + String(httpCode));
+        } else {
+            Serial.println("Error on sending POST: " + String(httpCode));
+        }
+
+        client.end();
+    } else {
+        Serial.println("Error in WiFi connection");
+    }
+}
+
+void appendJsonObject(StaticJsonDocument<1024> &doc, Sensor sensor) {
+    JsonObject sensorDoc = doc.createNestedObject();
+    sensorDoc["code"] = sensor.code;
+
+    JsonArray measuresArray = sensorDoc.createNestedArray("measures");
+
+    JsonObject measure = measuresArray.createNestedObject();
+    measure["value"] = sensor.measure.value; 
 }
