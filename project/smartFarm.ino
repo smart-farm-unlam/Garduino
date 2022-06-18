@@ -248,8 +248,9 @@ void sendDataToServer() {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient client;
 
-        //serverIp = 192.168.1.45
-        client.begin("http://192.168.1.45:8080/sensors/62acc77270752f2b6bbb88ee/events");
+        //serverIpLocal = 192.168.1.45
+        //serverIpCloud = https://smartfarmunlam.azurewebsites.net/
+        client.begin("https://smartfarmunlam.azurewebsites.net/sensors/62acc77270752f2b6bbb88ee/events");
         client.addHeader("Content-Type", "application/json");
 
         char jsonOutput[1024];
