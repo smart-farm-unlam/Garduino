@@ -81,15 +81,15 @@ class Sensor {
 //Events declaration
 Sensor tempSensor = Sensor("AT1");
 Sensor humiditySensor = Sensor("AH1");
-Sensor soilMoistureSensor1 = Sensor("SM1");
-Sensor soilMoistureSensor2 = Sensor("SM2");
-Sensor soilMoistureSensor3 = Sensor("SM3");
+Sensor soilMoistureSensor1 = Sensor("SH1");
+Sensor soilMoistureSensor2 = Sensor("SH2");
+Sensor soilMoistureSensor3 = Sensor("SH3");
 Sensor soilTempSensor1 = Sensor("ST1") ;
 Sensor soilTempSensor2 = Sensor("ST2");
 Sensor soilTempSensor3 = Sensor("ST3");
 
 Sensor soilMoistureArray[] = {soilMoistureSensor1, soilMoistureSensor2, soilMoistureSensor3}; 
-Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor3, soilTempSensor3}; 
+Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor2, soilTempSensor3}; 
 
 //----------------------------------------------
 
@@ -248,6 +248,7 @@ void sendDataToServer() {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient client;
 
+        //serverIp = 192.168.1.45
         client.begin("http://192.168.1.45:8080/sensors/62acc77270752f2b6bbb88ee/events");
         client.addHeader("Content-Type", "application/json");
 
@@ -258,11 +259,10 @@ void sendDataToServer() {
 
         for (Sensor sensorMoisture : soilMoistureArray) {
             appendJsonObject(doc, sensorMoisture);
-
         }
+
         for (Sensor sensorTemperature : soilTemperatureArray) {
             appendJsonObject(doc, sensorTemperature);
-
         }
 
         serializeJson(doc, jsonOutput);
