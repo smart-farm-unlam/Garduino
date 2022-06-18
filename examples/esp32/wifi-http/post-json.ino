@@ -26,7 +26,7 @@ void setup()
 
 void loop()
 {
-    if ((WiFi.status() == WL_CONNECTED)) // Check the current connection status
+    if (WiFi.status() == WL_CONNECTED) // Check the current connection status
     {
         HTTPClient client;
 
