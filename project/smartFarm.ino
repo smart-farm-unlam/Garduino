@@ -35,6 +35,7 @@ const int MEASUREMENT_TIME = 15000;     //15 seconds
 unsigned long current_time, previous_time;
 
 //Server path
+//String SERVER_URI = String("http://192.168.1.45:8080");
 String SERVER_URI = String("https://smartfarmunlam.azurewebsites.net");
 
 //FARM ID
@@ -136,7 +137,6 @@ void loop() {
         readSoilTemperatureSensors();
         //sendDataToServer();
         irrigationEventResolver();
-        irrigationEventResolverMock();
         previous_time = millis();
     }
     
@@ -322,23 +322,20 @@ void getSectorsInfo() {
 }
 
 void irrigationEventResolver() {
-    Serial.println("Logic to apply");
-}
-
-void irrigationEventResolverMock() {
     Serial.println("Mock irrigation");
 
     float sms1 = soilMoistureArray[0].measure.value;
     float sms2 = soilMoistureArray[1].measure.value;
     float sms3 = soilMoistureArray[2].measure.value;
 
-    Serial.println("Valores sms:");
+    Serial.println("Valores humedad por sector:");
     Serial.println(sms1);
     Serial.println(sms2);
     Serial.println(sms3);
     
     boolean hasToActivateWaterPump = false;
     int hasToDeactivateWaterPump = 0;
+    String sectorId;
 
     if (sms1 != ERROR_VALUE && sms1 < 60.0 && irrigationSectorStatus[0] == false) 
     {
@@ -346,6 +343,7 @@ void irrigationEventResolverMock() {
         digitalWrite(PIN_VALVE_1, LOW);
         irrigationSectorStatus[0] = true;
         hasToActivateWaterPump = true;
+        sectorId = "S1";
     }
 
     if(sms1 != ERROR_VALUE && sms1 >= 60.00 && sms1 <= 80.00 
@@ -354,6 +352,7 @@ void irrigationEventResolverMock() {
         Serial.println("Cerra valvula 1");
         digitalWrite(PIN_VALVE_1, HIGH);
         irrigationSectorStatus[0] = false;
+        sectorId = "S1";
     }
 
     if (sms2 != ERROR_VALUE && sms2 < 60.0 && irrigationSectorStatus[1] == false) 
@@ -362,6 +361,7 @@ void irrigationEventResolverMock() {
         digitalWrite(PIN_VALVE_2, LOW);
         irrigationSectorStatus[1] = true;
         hasToActivateWaterPump = true;
+        sectorId = "S2";
     }
 
     if(sms2 != ERROR_VALUE && sms2 >= 60.00 && sms2 <= 80.00 
@@ -370,6 +370,7 @@ void irrigationEventResolverMock() {
         Serial.println("Cerra valvula 2");
         digitalWrite(PIN_VALVE_3, HIGH);
         irrigationSectorStatus[1] = false;
+        sectorId = "S2";
     }
 
     if (sms3 != ERROR_VALUE && sms3 < 60.0 && irrigationSectorStatus[2] == false) {
@@ -377,6 +378,7 @@ void irrigationEventResolverMock() {
         digitalWrite(PIN_VALVE_3, LOW); 
         irrigationSectorStatus[2] = true;
         hasToActivateWaterPump = true;
+        sectorId = "S3";
     }
 
     if(sms3 != ERROR_VALUE && sms3 >= 60.00 && sms3 <= 70.00 
@@ -385,6 +387,7 @@ void irrigationEventResolverMock() {
         Serial.println("Cerra valvula 3");
         digitalWrite(PIN_VALVE_1, HIGH);
         irrigationSectorStatus[2] = false;
+        sectorId = "S3";
     }
 
     for (boolean irrigationStatus : irrigationSectorStatus) {
@@ -398,12 +401,14 @@ void irrigationEventResolverMock() {
         Serial.println("Todos los sectores estan bien, apagando bomba de agua");
         digitalWrite(PIN_WATER_PUMP, HIGH);
         waterPumpStatus = "OFF";
+        sendIrrigationEventToServer(sectorId.c_str());
     }
 
     if(waterPumpStatus == "OFF" && hasToActivateWaterPump == true) {
         Serial.println("Prendiendo bomba de agua");
         digitalWrite(PIN_WATER_PUMP, LOW);
         waterPumpStatus = "ON";
+        sendIrrigationEventToServer(sectorId.c_str());
     }
     Serial.println("Termine de probar el mock");
 }
@@ -426,4 +431,41 @@ String getRequest(const char* uri) {
     http.end();
 
     return payload;
+}
+
+void sendIrrigationEventToServer(const char* sectorId) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient client;
+
+        String endpoint = SERVER_URI + "/events/newEvent/" + FARM_ID;
+
+        Serial.println(endpoint);
+
+        client.begin(endpoint);
+        client.addHeader("Content-Type", "application/json");
+
+        char jsonInput[1024];
+        StaticJsonDocument<1024> doc;
+        JsonObject object = doc.to<JsonObject>();
+        object["eventType"] = "IrrigationEvent";
+        object["sectorId"] = sectorId;
+        object["status"] = waterPumpStatus;
+        //object["date"] = null;
+
+        serializeJson(doc, jsonInput);
+
+        Serial.println(jsonInput);
+
+        int httpCode = client.POST(String(jsonInput));
+
+        if (httpCode > 0) {
+            Serial.println("Status code: " + String(httpCode));
+        } else {
+            Serial.println("Error on sending POST: " + String(httpCode));
+        }
+
+        client.end();
+    } else {
+        Serial.println("Error in WiFi connection");
+    }
 }
