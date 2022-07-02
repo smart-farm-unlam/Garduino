@@ -1,6 +1,5 @@
 //External Libraries
 #include <DHT.h>
-#include <ThingSpeak.h>
 #include <WiFi.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -16,6 +15,10 @@ const int PIN_SOIL_MOISTURE_2 = 34;
 const int PIN_SOIL_MOISTURE_3 = 39;
 const int PIN_DS18B20 = 32;
 const int TEMPERATURE_PRECISION = 9;
+const int PIN_VALVE_1 = 15;
+const int PIN_VALVE_2 = 4;
+const int PIN_VALVE_3 = 5;
+const int PIN_WATER_PUMP = 18;
 
 //Sensor configuration
 DHT dht(PIN_DHT, DHT22);
@@ -26,15 +29,16 @@ DeviceAddress first_thermometer, second_thermometer, third_thermometer;
 //WIFI Settings
 const char* ssid = "Movistar14";
 const char* password = "mate2306";
-WiFiClient client;
-
-//ThingSpeak keys
-unsigned long CHANNEL_ID = 1757253;
-const char* WRITE_API_KEY = "GS9K4RKUJ6IQZT7F";
 
 //Software timer
 const int MEASUREMENT_TIME = 15000;     //15 seconds
 unsigned long current_time, previous_time;
+
+//Server path
+String SERVER_URI = String("https://smartfarmunlam.azurewebsites.net");
+
+//FARM ID
+String FARM_ID = String("62acc77270752f2b6bbb88ee");
 
 //-----------------------------------------------
 //Values
@@ -67,8 +71,8 @@ class Sensor {
         std::string code;
         Measure measure;
     
-    Sensor(std::string value) {
-        code = value;
+    Sensor(std::string code) {
+        code = code;
         measure = Measure(ERROR_VALUE);
     }
 
@@ -91,17 +95,30 @@ Sensor soilTempSensor3 = Sensor("ST3");
 Sensor soilMoistureArray[] = {soilMoistureSensor1, soilMoistureSensor2, soilMoistureSensor3}; 
 Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor2, soilTempSensor3}; 
 
+//Irrigation system
+boolean irrigationSectorStatus[] = {false, false, false};
+String waterPumpStatus = "OFF";
+
 //----------------------------------------------
 
 void setup() {
     Serial.begin(115200);
 
     initWiFi();
-    
-    ThingSpeak.begin(client);
-    
+
+    //Conf Pines
+    pinMode(PIN_VALVE_1, OUTPUT);
+    pinMode(PIN_VALVE_2, OUTPUT);
+    pinMode(PIN_VALVE_3, OUTPUT);
+    digitalWrite(PIN_VALVE_1, HIGH);
+    digitalWrite(PIN_VALVE_2, HIGH);
+    digitalWrite(PIN_VALVE_3, HIGH);
+
     //Sensors initialize
     initializeSensors();
+
+    //Retrieved data from server
+    getSectorsInfo();
     
     //software timer init
     current_time = millis();
@@ -117,8 +134,9 @@ void loop() {
         readTemperatureAndHumidity();
         readSoilMoistureSensors();
         readSoilTemperatureSensors();
-        //sendDataToThingSpeak();
-        sendDataToServer();
+        //sendDataToServer();
+        irrigationEventResolver();
+        irrigationEventResolverMock();
         previous_time = millis();
     }
     
@@ -230,30 +248,16 @@ void printAddress(DeviceAddress deviceAddress)
   }
 }
 
-void sendDataToThingSpeak() {
-    ThingSpeak.setField(1, temp);
-    ThingSpeak.setField(2, hum);
-    ThingSpeak.setField(3, soilMoistureArray[0].measure.value);
-    ThingSpeak.setField(4, soilMoistureArray[1].measure.value);
-    ThingSpeak.setField(5, soilMoistureArray[2].measure.value);
-    ThingSpeak.setField(6, soilTemperatureArray[0].measure.value);
-    ThingSpeak.setField(7, soilTemperatureArray[1].measure.value);
-    ThingSpeak.setField(8, soilTemperatureArray[2].measure.value);
-
-    ThingSpeak.writeFields(CHANNEL_ID, WRITE_API_KEY);
-    Serial.println(">> Data sent to ThingSpeak!");
-}
-
 void sendDataToServer() {
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient client;
 
-        //serverIpLocal = 192.168.1.45
-        //serverIpCloud = https://smartfarmunlam.azurewebsites.net/
-        client.begin("https://smartfarmunlam.azurewebsites.net/sensors/62acc77270752f2b6bbb88ee/events");
+        String endpoint = SERVER_URI + "/sensors/" + FARM_ID + "/events";
+
+        client.begin(endpoint);
         client.addHeader("Content-Type", "application/json");
 
-        char jsonOutput[1024];
+        char jsonInput[1024];
         StaticJsonDocument<1024> doc;
         appendJsonObject(doc, tempSensor);
         appendJsonObject(doc, humiditySensor);
@@ -266,11 +270,11 @@ void sendDataToServer() {
             appendJsonObject(doc, sensorTemperature);
         }
 
-        serializeJson(doc, jsonOutput);
+        serializeJson(doc, jsonInput);
 
-        Serial.println(jsonOutput);
+        Serial.println(jsonInput);
 
-        int httpCode = client.POST(String(jsonOutput));
+        int httpCode = client.POST(String(jsonInput));
 
         if (httpCode > 0) {
             Serial.println("Status code: " + String(httpCode));
@@ -292,4 +296,134 @@ void appendJsonObject(StaticJsonDocument<1024> &doc, Sensor sensor) {
 
     JsonObject measure = measuresArray.createNestedObject();
     measure["value"] = sensor.measure.value; 
+}
+
+void getSectorsInfo() {
+    if (WiFi.status() == WL_CONNECTED) {
+        String uri = SERVER_URI + "/sectors/" + FARM_ID + "/crop-types";
+        String sectorsData = getRequest(uri.c_str());
+        Serial.println(sectorsData);
+
+        char jsonOutput[2048];
+        sectorsData.replace(" ", "");
+        sectorsData.replace("\n", "");
+        sectorsData.trim();
+        sectorsData.remove(0, 1);
+        sectorsData.toCharArray(jsonOutput, 2048);
+
+        StaticJsonDocument<200> doc;
+        deserializeJson(doc, jsonOutput);
+
+        String id1 = doc.getElement(0);
+        Serial.println("Dato obtenido: " + id1);
+    } else {
+        Serial.println("Error in WiFi connection");
+    }
+}
+
+void irrigationEventResolver() {
+    Serial.println("Logic to apply");
+}
+
+void irrigationEventResolverMock() {
+    Serial.println("Mock irrigation");
+
+    float sms1 = soilMoistureArray[0].measure.value;
+    float sms2 = soilMoistureArray[1].measure.value;
+    float sms3 = soilMoistureArray[2].measure.value;
+
+    Serial.println("Valores sms:");
+    Serial.println(sms1);
+    Serial.println(sms2);
+    Serial.println(sms3);
+    
+    boolean hasToActivateWaterPump = false;
+    int hasToDeactivateWaterPump = 0;
+
+    if (sms1 != ERROR_VALUE && sms1 < 60.0 && irrigationSectorStatus[0] == false) 
+    {
+        Serial.println("Abrir valvula 1");
+        digitalWrite(PIN_VALVE_1, LOW);
+        irrigationSectorStatus[0] = true;
+        hasToActivateWaterPump = true;
+    }
+
+    if(sms1 != ERROR_VALUE && sms1 >= 60.00 && sms1 <= 80.00 
+        && irrigationSectorStatus[0] == true) 
+    {
+        Serial.println("Cerra valvula 1");
+        digitalWrite(PIN_VALVE_1, HIGH);
+        irrigationSectorStatus[0] = false;
+    }
+
+    if (sms2 != ERROR_VALUE && sms2 < 60.0 && irrigationSectorStatus[1] == false) 
+    {
+        Serial.println("Abrir valvula 2");
+        digitalWrite(PIN_VALVE_2, LOW);
+        irrigationSectorStatus[1] = true;
+        hasToActivateWaterPump = true;
+    }
+
+    if(sms2 != ERROR_VALUE && sms2 >= 60.00 && sms2 <= 80.00 
+        && irrigationSectorStatus[1] == true) 
+    {
+        Serial.println("Cerra valvula 2");
+        digitalWrite(PIN_VALVE_3, HIGH);
+        irrigationSectorStatus[1] = false;
+    }
+
+    if (sms3 != ERROR_VALUE && sms3 < 60.0 && irrigationSectorStatus[2] == false) {
+        Serial.println("Abrir valvula 3");
+        digitalWrite(PIN_VALVE_3, LOW); 
+        irrigationSectorStatus[2] = true;
+        hasToActivateWaterPump = true;
+    }
+
+    if(sms3 != ERROR_VALUE && sms3 >= 60.00 && sms3 <= 70.00 
+        && irrigationSectorStatus[2] == true) 
+    {
+        Serial.println("Cerra valvula 3");
+        digitalWrite(PIN_VALVE_1, HIGH);
+        irrigationSectorStatus[2] = false;
+    }
+
+    for (boolean irrigationStatus : irrigationSectorStatus) {
+        if(irrigationStatus == false) {
+            hasToDeactivateWaterPump++;
+        }
+    }
+
+    int cantSectores = 3;
+    if (waterPumpStatus == "ON" && hasToDeactivateWaterPump == cantSectores) {
+        Serial.println("Todos los sectores estan bien, apagando bomba de agua");
+        digitalWrite(PIN_WATER_PUMP, HIGH);
+        waterPumpStatus = "OFF";
+    }
+
+    if(waterPumpStatus == "OFF" && hasToActivateWaterPump == true) {
+        Serial.println("Prendiendo bomba de agua");
+        digitalWrite(PIN_WATER_PUMP, LOW);
+        waterPumpStatus = "ON";
+    }
+    Serial.println("Termine de probar el mock");
+}
+
+String getRequest(const char* uri) {
+    HTTPClient http;
+    http.begin(uri);
+
+    int httpCode = http.GET();
+
+    String payload = "{}";
+
+    if (httpCode > 0) {
+        Serial.println("HTTP Response code: " +  String(httpCode));
+        payload = http.getString();
+    } else {
+        Serial.println("Error on GET Request, error code: " + String(httpCode));
+    }
+
+    http.end();
+
+    return payload;
 }
