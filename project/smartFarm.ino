@@ -23,7 +23,7 @@ const int PIN_WATER_PUMP = 18;
 //Sensor configuration
 DHT dht(PIN_DHT, DHT22);
 OneWire oneWire(PIN_DS18B20);
-DallasTemperature sensors(&oneWire);
+DallasTemperature soilTemperatureSensors(&oneWire);
 DeviceAddress first_thermometer, second_thermometer, third_thermometer;
 
 //WIFI Settings
@@ -31,8 +31,10 @@ const char* ssid = "Movistar14";
 const char* password = "mate2306";
 
 //Software timer
-const int MEASUREMENT_TIME = 15000;     //15 seconds
+int MEASUREMENT_TIME = 10000;     //10 seconds
 unsigned long current_time, previous_time;
+int IRRIGATION_LOOP_TIME = 30000;      //30 seconds
+unsigned long irrigation_current_time, irrigation_previous_time;
 
 //Server path
 //String SERVER_URI = String("http://192.168.1.45:8080");
@@ -49,7 +51,7 @@ float temp = ERROR_VALUE;
 float hum = ERROR_VALUE;
 
 //Capacitive soil moisture limit
-const int AIR_VALUE = 3700;
+const int AIR_VALUE = 3800;
 const int WATER_VALUE = 1200;
 //-----------------------------------------------
 //Classes
@@ -72,13 +74,13 @@ class Sensor {
         std::string code;
         Measure measure;
     
-    Sensor(std::string code) {
-        code = code;
+    Sensor(std::string value) {
+        code = value;
         measure = Measure(ERROR_VALUE);
     }
 
-    Sensor(std::string code, Measure measure) {
-        code = code;
+    Sensor(std::string value, Measure measure) {
+        code = value;
         measure = measure;
     }
 };
@@ -111,9 +113,11 @@ void setup() {
     pinMode(PIN_VALVE_1, OUTPUT);
     pinMode(PIN_VALVE_2, OUTPUT);
     pinMode(PIN_VALVE_3, OUTPUT);
+    pinMode(PIN_WATER_PUMP, OUTPUT);
     digitalWrite(PIN_VALVE_1, HIGH);
     digitalWrite(PIN_VALVE_2, HIGH);
     digitalWrite(PIN_VALVE_3, HIGH);
+    digitalWrite(PIN_WATER_PUMP, HIGH);
 
     //Sensors initialize
     initializeSensors();
@@ -124,10 +128,13 @@ void setup() {
     //software timer init
     current_time = millis();
     previous_time = millis();
+    irrigation_current_time = millis();
+    irrigation_previous_time = millis();
 }
 
 void loop() {
     current_time = millis();
+    irrigation_current_time = millis();
 
     if ((current_time - previous_time) > MEASUREMENT_TIME) {
         Serial.println("-----------------------------------");
@@ -135,9 +142,15 @@ void loop() {
         readTemperatureAndHumidity();
         readSoilMoistureSensors();
         readSoilTemperatureSensors();
-        //sendDataToServer();
-        irrigationEventResolver();
+        sendDataToServer();
         previous_time = millis();
+    }
+
+    if ((irrigation_current_time - irrigation_previous_time > IRRIGATION_LOOP_TIME)) {
+        Serial.println("-----------------------------------");
+        Serial.println("Control irrigation");
+        irrigationEventResolver();
+        irrigation_previous_time = millis();
     }
     
 }
@@ -188,7 +201,7 @@ void setSoilMoisture(int pin, int index) {
 }
 
 void readSoilTemperatureSensors() {
-    sensors.requestTemperatures();
+    soilTemperatureSensors.requestTemperatures();
     setSoilTemperature(first_thermometer, 1);
     setSoilTemperature(second_thermometer, 2);
     setSoilTemperature(third_thermometer, 3);
@@ -196,7 +209,7 @@ void readSoilTemperatureSensors() {
 
 void setSoilTemperature(DeviceAddress deviceAddress, int index)
 {
-  float tempC = sensors.getTempC(deviceAddress);
+  float tempC = soilTemperatureSensors.getTempC(deviceAddress);
   if(tempC == DEVICE_DISCONNECTED_C) 
   {
     Serial.println("Error ["+ String(index) + "]: Could not read temperature data");
@@ -211,12 +224,12 @@ void initializeSensors() {
     dht.begin();    
 
     //ds18b20 init
-    sensors.begin();
+    soilTemperatureSensors.begin();
     Serial.println("Locating ds18b20 devices...");
-    Serial.println("Found " + String(sensors.getDeviceCount()) + " devices");
-    if (!sensors.getAddress(first_thermometer, 0)) Serial.println("Unable to find address for Device 0");
-    if (!sensors.getAddress(second_thermometer, 1)) Serial.println("Unable to find address for Device 1");
-    if (!sensors.getAddress(third_thermometer, 2)) Serial.println("Unable to find address for Device 2");
+    Serial.println("Found " + String(soilTemperatureSensors.getDeviceCount()) + " devices");
+    if (!soilTemperatureSensors.getAddress(first_thermometer, 0)) Serial.println("Unable to find address for Device 0");
+    if (!soilTemperatureSensors.getAddress(second_thermometer, 1)) Serial.println("Unable to find address for Device 1");
+    if (!soilTemperatureSensors.getAddress(third_thermometer, 2)) Serial.println("Unable to find address for Device 2");
 
     // show the addresses we found on the bus
     Serial.print("Device 0 Address: ");
@@ -232,9 +245,9 @@ void initializeSensors() {
     Serial.println();
 
     // set the resolution to 9 bit per device
-    sensors.setResolution(first_thermometer, TEMPERATURE_PRECISION);
-    sensors.setResolution(second_thermometer, TEMPERATURE_PRECISION);
-    sensors.setResolution(third_thermometer, TEMPERATURE_PRECISION);
+    soilTemperatureSensors.setResolution(first_thermometer, TEMPERATURE_PRECISION);
+    soilTemperatureSensors.setResolution(second_thermometer, TEMPERATURE_PRECISION);
+    soilTemperatureSensors.setResolution(third_thermometer, TEMPERATURE_PRECISION);
 }
 
 // function to print a device address
@@ -322,95 +335,112 @@ void getSectorsInfo() {
 }
 
 void irrigationEventResolver() {
-    Serial.println("Mock irrigation");
-
-    float sms1 = soilMoistureArray[0].measure.value;
-    float sms2 = soilMoistureArray[1].measure.value;
-    float sms3 = soilMoistureArray[2].measure.value;
-
-    Serial.println("Valores humedad por sector:");
-    Serial.println(sms1);
-    Serial.println(sms2);
-    Serial.println(sms3);
+    Serial.println("Checking sectors humidity");
+    float humidity1 = soilMoistureArray[0].measure.value;
+    float humidity2 = soilMoistureArray[1].measure.value;
+    float humidity3 = soilMoistureArray[2].measure.value;
     
     boolean hasToActivateWaterPump = false;
-    int hasToDeactivateWaterPump = 0;
+    int deactivateWaterPumpVotes = 0;
     String sectorId;
 
-    if (sms1 != ERROR_VALUE && sms1 < 60.0 && irrigationSectorStatus[0] == false) 
+    //get from server
+    float minValueS1 = 60.0;
+    float minValueS2 = 60.0;
+    float minValueS3 = 60.0;
+
+    digitalWrite(PIN_WATER_PUMP, HIGH); //Turn off the pump
+
+    //TODO check if we can replace this with a for loop
+    //Check Sector 1
+    if (humidity1 != ERROR_VALUE && humidity1 < minValueS1) 
     {
-        Serial.println("Abrir valvula 1");
-        digitalWrite(PIN_VALVE_1, LOW);
+        //If the valve is closed open it!
+        if(digitalRead(PIN_VALVE_1) == HIGH) { 
+            digitalWrite(PIN_VALVE_1, LOW);
+            Serial.println("Valve 1 opened");
+        }
         irrigationSectorStatus[0] = true;
         hasToActivateWaterPump = true;
         sectorId = "S1";
-    }
-
-    if(sms1 != ERROR_VALUE && sms1 >= 60.00 && sms1 <= 80.00 
-        && irrigationSectorStatus[0] == true) 
-    {
-        Serial.println("Cerra valvula 1");
+    } else if (irrigationSectorStatus[0] == true && (humidity1 == ERROR_VALUE || humidity1 >= minValueS1)) {
         digitalWrite(PIN_VALVE_1, HIGH);
+        Serial.println("Valve 1 closed");
         irrigationSectorStatus[0] = false;
         sectorId = "S1";
+        Serial.println("Sector 1 humidity ok");
+    } else {
+        Serial.println("Sector 1 humidity ok");
     }
+    
 
-    if (sms2 != ERROR_VALUE && sms2 < 60.0 && irrigationSectorStatus[1] == false) 
-    {
-        Serial.println("Abrir valvula 2");
-        digitalWrite(PIN_VALVE_2, LOW);
+    //Check Sector 2
+    if (humidity2 != ERROR_VALUE && humidity2 < minValueS2) {
+        //If the valve is closed open it!
+        if(digitalRead(PIN_VALVE_2) == HIGH) {
+            digitalWrite(PIN_VALVE_2, LOW);
+            Serial.println("Valve 2 opened");
+        }
         irrigationSectorStatus[1] = true;
         hasToActivateWaterPump = true;
         sectorId = "S2";
-    }
-
-    if(sms2 != ERROR_VALUE && sms2 >= 60.00 && sms2 <= 80.00 
-        && irrigationSectorStatus[1] == true) 
-    {
-        Serial.println("Cerra valvula 2");
-        digitalWrite(PIN_VALVE_3, HIGH);
+    } else if (irrigationSectorStatus[1] == true && (humidity2 == ERROR_VALUE || humidity2 >= minValueS2)) {
+        digitalWrite(PIN_VALVE_2, HIGH);
+        Serial.println("Valve 2 closed");
         irrigationSectorStatus[1] = false;
         sectorId = "S2";
+        Serial.println("Sector 2 humidity ok");
+    } else {
+        Serial.println("Sector 2 humidity ok");
     }
 
-    if (sms3 != ERROR_VALUE && sms3 < 60.0 && irrigationSectorStatus[2] == false) {
-        Serial.println("Abrir valvula 3");
-        digitalWrite(PIN_VALVE_3, LOW); 
+     //Check Sector 3
+    if (humidity3 != ERROR_VALUE && humidity3 < minValueS3) {
+        //If the valve is closed open it!
+        if(digitalRead(PIN_VALVE_3) == HIGH) {
+            digitalWrite(PIN_VALVE_3, LOW);
+            Serial.println("Valve 3 opened");
+        }
         irrigationSectorStatus[2] = true;
         hasToActivateWaterPump = true;
         sectorId = "S3";
-    }
-
-    if(sms3 != ERROR_VALUE && sms3 >= 60.00 && sms3 <= 70.00 
-        && irrigationSectorStatus[2] == true) 
-    {
-        Serial.println("Cerra valvula 3");
-        digitalWrite(PIN_VALVE_1, HIGH);
+    } else if(irrigationSectorStatus[2] == true && (humidity3 == ERROR_VALUE || humidity3 >= minValueS3)) {
+        digitalWrite(PIN_VALVE_3, HIGH);
+        Serial.println("Valve 3 closed");
         irrigationSectorStatus[2] = false;
         sectorId = "S3";
+        Serial.println("Sector 3 humidity ok");
+    } else {
+        Serial.println("Sector 3 humidity ok");
     }
 
     for (boolean irrigationStatus : irrigationSectorStatus) {
         if(irrigationStatus == false) {
-            hasToDeactivateWaterPump++;
+            deactivateWaterPumpVotes++;
         }
     }
 
-    int cantSectores = 3;
-    if (waterPumpStatus == "ON" && hasToDeactivateWaterPump == cantSectores) {
-        Serial.println("Todos los sectores estan bien, apagando bomba de agua");
-        digitalWrite(PIN_WATER_PUMP, HIGH);
-        waterPumpStatus = "OFF";
-        sendIrrigationEventToServer(sectorId.c_str());
-    }
-
     if(waterPumpStatus == "OFF" && hasToActivateWaterPump == true) {
-        Serial.println("Prendiendo bomba de agua");
+        MEASUREMENT_TIME = 2000;
+        IRRIGATION_LOOP_TIME = 2000; //Check every 2 seconds
         digitalWrite(PIN_WATER_PUMP, LOW);
+        Serial.println("Water pump on");
         waterPumpStatus = "ON";
         sendIrrigationEventToServer(sectorId.c_str());
+    } else if (hasToActivateWaterPump == true) {
+        digitalWrite(PIN_WATER_PUMP, LOW);
+        Serial.println("Water pump on again");
     }
-    Serial.println("Termine de probar el mock");
+
+    int cantSectores = 3;
+    if (waterPumpStatus == "ON" && deactivateWaterPumpVotes == cantSectores) {
+        Serial.println("All sectors ok, turn off water pump");
+        digitalWrite(PIN_WATER_PUMP, HIGH); //turn it off
+        waterPumpStatus = "OFF";
+        sendIrrigationEventToServer(sectorId.c_str());
+        MEASUREMENT_TIME = 10000;
+        IRRIGATION_LOOP_TIME = 30000;
+    }
 }
 
 String getRequest(const char* uri) {
