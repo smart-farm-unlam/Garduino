@@ -349,7 +349,7 @@ void irrigationEventResolver() {
     float minValueS2 = 60.0;
     float minValueS3 = 60.0;
 
-    digitalWrite(PIN_WATER_PUMP, HIGH); //turn it off
+    digitalWrite(PIN_WATER_PUMP, HIGH); //Turn off the pump
 
     //TODO check if we can replace this with a for loop
     //Check Sector 1
