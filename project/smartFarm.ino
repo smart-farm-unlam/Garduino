@@ -52,7 +52,7 @@ float hum = ERROR_VALUE;
 
 //Capacitive soil moisture limit
 const int AIR_VALUE = 3800;
-const int WATER_VALUE = 1200;
+const int WATER_VALUE = 1250;
 //-----------------------------------------------
 //Classes
 class Measure {
@@ -349,7 +349,7 @@ void irrigationEventResolver() {
     float minValueS2 = 60.0;
     float minValueS3 = 60.0;
 
-    digitalWrite(PIN_WATER_PUMP, HIGH); //Turn off the pump
+    digitalWrite(PIN_WATER_PUMP, HIGH); //turn it off
 
     //TODO check if we can replace this with a for loop
     //Check Sector 1
@@ -423,11 +423,12 @@ void irrigationEventResolver() {
     if(waterPumpStatus == "OFF" && hasToActivateWaterPump == true) {
         MEASUREMENT_TIME = 2000;
         IRRIGATION_LOOP_TIME = 2000; //Check every 2 seconds
-        digitalWrite(PIN_WATER_PUMP, LOW);
+        digitalWrite(PIN_WATER_PUMP, LOW); //turn on water pump
         Serial.println("Water pump on");
         waterPumpStatus = "ON";
         sendIrrigationEventToServer(sectorId.c_str());
     } else if (hasToActivateWaterPump == true) {
+        delay(3000);
         digitalWrite(PIN_WATER_PUMP, LOW);
         Serial.println("Water pump on again");
     }
