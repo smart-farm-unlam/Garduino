@@ -5,6 +5,8 @@
 #include <DallasTemperature.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
+#include <SPIFFS.h>
 //-----------------------------------------------
 
 //Constants
@@ -29,6 +31,10 @@ DeviceAddress first_thermometer, second_thermometer, third_thermometer;
 //WIFI Settings
 const char* ssid = "Movistar14";
 const char* password = "mate2306";
+
+//Flash Memory
+Preferences preferences;
+
 
 //Software timer
 int MEASUREMENT_TIME = 10000;     //10 seconds
@@ -84,8 +90,29 @@ class Sensor {
         measure = measure;
     }
 };
+
+class Sector {
+    public:
+        String id;
+        String crop;
+        float minHumidity;
+
+    Sector() {
+        id = "";
+        crop = "";
+        minHumidity = 0.0;
+    }
+
+    Sector(String idValue, String cropValue, float minHumidityValue) {
+        id = idValue;
+        crop = cropValue;
+        minHumidity = minHumidityValue;
+    }
+
+};
+
 //----------------------------------------------
-//Events declaration
+//Sensors declaration
 Sensor tempSensor = Sensor("AT1");
 Sensor humiditySensor = Sensor("AH1");
 Sensor soilMoistureSensor1 = Sensor("SH1");
@@ -101,6 +128,10 @@ Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor2, soilTempSenso
 //Irrigation system
 boolean irrigationSectorStatus[] = {false, false, false};
 String waterPumpStatus = "OFF";
+const int VALVES[] = {PIN_VALVE_1, PIN_VALVE_2, PIN_VALVE_3};
+
+int cantSectors = 0;
+Sector sectors[3] = {};
 
 //----------------------------------------------
 
@@ -109,18 +140,13 @@ void setup() {
 
     initWiFi();
 
-    //Conf Pines
-    pinMode(PIN_VALVE_1, OUTPUT);
-    pinMode(PIN_VALVE_2, OUTPUT);
-    pinMode(PIN_VALVE_3, OUTPUT);
-    pinMode(PIN_WATER_PUMP, OUTPUT);
-    digitalWrite(PIN_VALVE_1, HIGH);
-    digitalWrite(PIN_VALVE_2, HIGH);
-    digitalWrite(PIN_VALVE_3, HIGH);
-    digitalWrite(PIN_WATER_PUMP, HIGH);
-
-    //Sensors initialize
+    configPins();
     initializeSensors();
+
+    //Preferences (Flash Memory)
+    preferences.begin("sectors", false);
+    //Flash File System
+    SPIFFS.begin(true);
 
     //Retrieved data from server
     getSectorsInfo();
@@ -142,7 +168,7 @@ void loop() {
         readTemperatureAndHumidity();
         readSoilMoistureSensors();
         readSoilTemperatureSensors();
-        sendDataToServer();
+        sendMeasuresToServer();
         previous_time = millis();
     }
 
@@ -151,6 +177,7 @@ void loop() {
         Serial.println("Control irrigation");
         irrigationEventResolver();
         irrigation_previous_time = millis();
+        retryEvents();
     }
     
 }
@@ -158,12 +185,25 @@ void loop() {
 void initWiFi() {
     WiFi.begin(ssid, password);
     Serial.print("Connecting to WiFi");
-    while (WiFi.status() != WL_CONNECTED) {
+    int retryConnection = 0;
+    while (WiFi.status() != WL_CONNECTED && retryConnection < 10) {
         Serial.print(".");
         delay(500);
+        retryConnection++;
     }
     Serial.print("Connect to the WiFi network with IP: ");
     Serial.println(WiFi.localIP());
+}
+
+void configPins() {
+    pinMode(PIN_VALVE_1, OUTPUT);
+    pinMode(PIN_VALVE_2, OUTPUT);
+    pinMode(PIN_VALVE_3, OUTPUT);
+    pinMode(PIN_WATER_PUMP, OUTPUT);
+    digitalWrite(PIN_VALVE_1, HIGH);
+    digitalWrite(PIN_VALVE_2, HIGH);
+    digitalWrite(PIN_VALVE_3, HIGH);
+    digitalWrite(PIN_WATER_PUMP, HIGH);
 }
 
 //Error +-2.5%
@@ -261,43 +301,29 @@ void printAddress(DeviceAddress deviceAddress)
   }
 }
 
-void sendDataToServer() {
+void sendMeasuresToServer() {
+    char body[1024];
+    StaticJsonDocument<1024> doc;
+    appendJsonObject(doc, tempSensor);
+    appendJsonObject(doc, humiditySensor);
+
+    for (Sensor sensorMoisture : soilMoistureArray) {
+        appendJsonObject(doc, sensorMoisture);
+    }
+
+    for (Sensor sensorTemperature : soilTemperatureArray) {
+        appendJsonObject(doc, sensorTemperature);
+    }
+
+    serializeJson(doc, body);
+
+    String endpoint = SERVER_URI + "/sensors/" + FARM_ID + "/events";
+
     if (WiFi.status() == WL_CONNECTED) {
-        HTTPClient client;
-
-        String endpoint = SERVER_URI + "/sensors/" + FARM_ID + "/events";
-
-        client.begin(endpoint);
-        client.addHeader("Content-Type", "application/json");
-
-        char jsonInput[1024];
-        StaticJsonDocument<1024> doc;
-        appendJsonObject(doc, tempSensor);
-        appendJsonObject(doc, humiditySensor);
-
-        for (Sensor sensorMoisture : soilMoistureArray) {
-            appendJsonObject(doc, sensorMoisture);
-        }
-
-        for (Sensor sensorTemperature : soilTemperatureArray) {
-            appendJsonObject(doc, sensorTemperature);
-        }
-
-        serializeJson(doc, jsonInput);
-
-        Serial.println(jsonInput);
-
-        int httpCode = client.POST(String(jsonInput));
-
-        if (httpCode > 0) {
-            Serial.println("Status code: " + String(httpCode));
-        } else {
-            Serial.println("Error on sending POST: " + String(httpCode));
-        }
-
-        client.end();
+        sendRequest(endpoint.c_str(), body);
     } else {
-        Serial.println("Error in WiFi connection");
+        Serial.println("Error Posting measures, causes WiFi connection");
+        saveRetry(endpoint.c_str(), body);
     }
 }
 
@@ -311,192 +337,182 @@ void appendJsonObject(StaticJsonDocument<1024> &doc, Sensor sensor) {
     measure["value"] = sensor.measure.value; 
 }
 
-void getSectorsInfo() {
-    if (WiFi.status() == WL_CONNECTED) {
-        String uri = SERVER_URI + "/sectors/" + FARM_ID + "/crop-types";
-        String sectorsData = getRequest(uri.c_str());
-        Serial.println(sectorsData);
 
-        char jsonOutput[2048];
-        sectorsData.replace(" ", "");
+void getSectorsInfo() {
+    Serial.println("-----------------------------------");
+    Serial.println("Get Sectors info");
+    if (WiFi.status() == WL_CONNECTED) {
+        String endpoint = SERVER_URI + "/sectors/" + FARM_ID + "/crop-types";
+        String sectorsData = getRequest(endpoint.c_str());
+
         sectorsData.replace("\n", "");
         sectorsData.trim();
-        sectorsData.remove(0, 1);
-        sectorsData.toCharArray(jsonOutput, 2048);
 
-        StaticJsonDocument<200> doc;
-        deserializeJson(doc, jsonOutput);
+        char jsonOutput[1536];
+        sectorsData.toCharArray(jsonOutput, 1536);
 
-        String id1 = doc.getElement(0);
-        Serial.println("Dato obtenido: " + id1);
+        Serial.println("SectorsData: " + String(jsonOutput));
+
+        StaticJsonDocument<1536> doc;
+        DeserializationError err = deserializeJson(doc, jsonOutput);
+
+        if (err) {
+            Serial.print(F("deserializeJson() failed with code "));
+            Serial.println(err.f_str());
+        }
+
+        JsonArray sectorsArr = doc.as<JsonArray>();
+        
+        int i = 0;
+        for (JsonObject obj : sectorsArr) {
+            String id = obj["id"];
+            String cropName = obj["cropType"]["name"];
+            float minHumidityValue = obj["cropType"]["parameters"][0]["min"];
+
+            Sector sector = Sector(id, cropName, minHumidityValue);
+            sectors[i] = sector;
+            i++;
+        }
+        cantSectors = i;
+        preferences.putInt("cantSectors", cantSectors);
     } else {
         Serial.println("Error in WiFi connection");
+        cantSectors = preferences.getInt("cantSectors");
     }
 }
 
 void irrigationEventResolver() {
     Serial.println("Checking sectors humidity");
-    float humidity1 = soilMoistureArray[0].measure.value;
-    float humidity2 = soilMoistureArray[1].measure.value;
-    float humidity3 = soilMoistureArray[2].measure.value;
-    
-    boolean hasToActivateWaterPump = false;
-    int deactivateWaterPumpVotes = 0;
-    String sectorId;
-
-    //get from server
-    float minValueS1 = 60.0;
-    float minValueS2 = 60.0;
-    float minValueS3 = 60.0;
 
     digitalWrite(PIN_WATER_PUMP, HIGH); //Turn off the pump
 
-    //TODO check if we can replace this with a for loop
-    //Check Sector 1
-    if (humidity1 != ERROR_VALUE && humidity1 < minValueS1) 
-    {
-        //If the valve is closed open it!
-        if(digitalRead(PIN_VALVE_1) == HIGH) { 
-            digitalWrite(PIN_VALVE_1, LOW);
-            Serial.println("Valve 1 opened");
-        }
-        irrigationSectorStatus[0] = true;
-        hasToActivateWaterPump = true;
-        sectorId = "S1";
-    } else if (irrigationSectorStatus[0] == true && (humidity1 == ERROR_VALUE || humidity1 >= minValueS1)) {
-        digitalWrite(PIN_VALVE_1, HIGH);
-        Serial.println("Valve 1 closed");
-        irrigationSectorStatus[0] = false;
-        sectorId = "S1";
-        Serial.println("Sector 1 humidity ok");
-    } else {
-        Serial.println("Sector 1 humidity ok");
-    }
-    
+    boolean hasToActivateWaterPump = false;
+    int deactivateWaterPumpVotes = 0;
 
-    //Check Sector 2
-    if (humidity2 != ERROR_VALUE && humidity2 < minValueS2) {
-        //If the valve is closed open it!
-        if(digitalRead(PIN_VALVE_2) == HIGH) {
-            digitalWrite(PIN_VALVE_2, LOW);
-            Serial.println("Valve 2 opened");
-        }
-        irrigationSectorStatus[1] = true;
-        hasToActivateWaterPump = true;
-        sectorId = "S2";
-    } else if (irrigationSectorStatus[1] == true && (humidity2 == ERROR_VALUE || humidity2 >= minValueS2)) {
-        digitalWrite(PIN_VALVE_2, HIGH);
-        Serial.println("Valve 2 closed");
-        irrigationSectorStatus[1] = false;
-        sectorId = "S2";
-        Serial.println("Sector 2 humidity ok");
-    } else {
-        Serial.println("Sector 2 humidity ok");
-    }
+    for (int i = 0; i < cantSectors; i++) {
+        float humidity = soilMoistureArray[i].measure.value;
+        Sector sector = sectors[i];
 
-     //Check Sector 3
-    if (humidity3 != ERROR_VALUE && humidity3 < minValueS3) {
-        //If the valve is closed open it!
-        if(digitalRead(PIN_VALVE_3) == HIGH) {
-            digitalWrite(PIN_VALVE_3, LOW);
-            Serial.println("Valve 3 opened");
-        }
-        irrigationSectorStatus[2] = true;
-        hasToActivateWaterPump = true;
-        sectorId = "S3";
-    } else if(irrigationSectorStatus[2] == true && (humidity3 == ERROR_VALUE || humidity3 >= minValueS3)) {
-        digitalWrite(PIN_VALVE_3, HIGH);
-        Serial.println("Valve 3 closed");
-        irrigationSectorStatus[2] = false;
-        sectorId = "S3";
-        Serial.println("Sector 3 humidity ok");
-    } else {
-        Serial.println("Sector 3 humidity ok");
-    }
-
-    for (boolean irrigationStatus : irrigationSectorStatus) {
-        if(irrigationStatus == false) {
-            deactivateWaterPumpVotes++;
+        if(humidity != ERROR_VALUE && humidity < sector.minHumidity) {
+            //If the valve is closed open it
+            if(digitalRead(VALVES[i]) == HIGH) { 
+                digitalWrite(VALVES[i], LOW);
+                Serial.println("Valve " + String(i+1) + " opened");
+                sendIrrigationEventToServer(sector.id.c_str(), "ON");
+            }
+            hasToActivateWaterPump = true;
+        } else if (humidity == ERROR_VALUE || humidity >= sector.minHumidity) {
+            //If the valve is open closed it
+            if(digitalRead(VALVES[i]) == LOW) { 
+                digitalWrite(VALVES[i], HIGH);
+                Serial.println("Valve " + String(i+1) + " closed");
+                sendIrrigationEventToServer(sector.id.c_str(), "OFF");
+            }
+            Serial.println("Humidity from " + sector.id + " is ok.");
         }
     }
 
     if(waterPumpStatus == "OFF" && hasToActivateWaterPump == true) {
+        //Timers check every 2 seconds
         MEASUREMENT_TIME = 2000;
-        IRRIGATION_LOOP_TIME = 2000; //Check every 2 seconds
+        IRRIGATION_LOOP_TIME = 2000; 
         digitalWrite(PIN_WATER_PUMP, LOW); //turn on water pump
         Serial.println("Water pump on");
         waterPumpStatus = "ON";
-        sendIrrigationEventToServer(sectorId.c_str());
     } else if (hasToActivateWaterPump == true) {
         delay(3000);
-        digitalWrite(PIN_WATER_PUMP, LOW);
+        digitalWrite(PIN_WATER_PUMP, LOW); //turn it again
         Serial.println("Water pump on again");
     }
 
-    int cantSectores = 3;
-    if (waterPumpStatus == "ON" && deactivateWaterPumpVotes == cantSectores) {
+    if (waterPumpStatus == "ON" && hasToActivateWaterPump == false) {
         Serial.println("All sectors ok, turn off water pump");
         digitalWrite(PIN_WATER_PUMP, HIGH); //turn it off
         waterPumpStatus = "OFF";
-        sendIrrigationEventToServer(sectorId.c_str());
+        //reset timers to normal
         MEASUREMENT_TIME = 10000;
         IRRIGATION_LOOP_TIME = 30000;
     }
 }
 
-String getRequest(const char* uri) {
-    HTTPClient http;
-    http.begin(uri);
+String getRequest(const char* endpoint) {
+    HTTPClient client;
+    client.begin(endpoint);
 
-    int httpCode = http.GET();
+    int httpCode = client.GET();
 
-    String payload = "{}";
+    String response = "{}";
 
     if (httpCode > 0) {
         Serial.println("HTTP Response code: " +  String(httpCode));
-        payload = http.getString();
+        response = client.getString();
     } else {
         Serial.println("Error on GET Request, error code: " + String(httpCode));
     }
 
-    http.end();
+    client.end();
 
-    return payload;
+    return response;
 }
 
-void sendIrrigationEventToServer(const char* sectorId) {
-    if (WiFi.status() == WL_CONNECTED) {
-        HTTPClient client;
+void sendRequest(const char* endpoint, const char* body) {
+    Serial.println("\nSending POST request to " + String(endpoint));
+    Serial.println("Body: " + String(body));
 
-        String endpoint = SERVER_URI + "/events/newEvent/" + FARM_ID;
+    HTTPClient client;
+    client.begin(endpoint);
+    client.addHeader("Content-Type", "application/json");   
 
-        Serial.println(endpoint);
+    int httpCode = client.POST(String(body));
 
-        client.begin(endpoint);
-        client.addHeader("Content-Type", "application/json");
-
-        char jsonInput[1024];
-        StaticJsonDocument<1024> doc;
-        JsonObject object = doc.to<JsonObject>();
-        object["eventType"] = "IrrigationEvent";
-        object["sectorId"] = sectorId;
-        object["status"] = waterPumpStatus;
-        //object["date"] = null;
-
-        serializeJson(doc, jsonInput);
-
-        Serial.println(jsonInput);
-
-        int httpCode = client.POST(String(jsonInput));
-
-        if (httpCode > 0) {
-            Serial.println("Status code: " + String(httpCode));
-        } else {
-            Serial.println("Error on sending POST: " + String(httpCode));
-        }
-
-        client.end();
+    if (httpCode > 0) {
+        Serial.println("HTTP Response code: " +  String(httpCode));
     } else {
-        Serial.println("Error in WiFi connection");
+        Serial.println("Error on POST Request, error code: " + String(httpCode));
     }
+
+    client.end();
+}
+
+void sendIrrigationEventToServer(const char* sectorId, const char* waterPumpStatus) {
+    char body[1024];
+    StaticJsonDocument<1024> doc;
+    JsonObject object = doc.to<JsonObject>();
+    object["eventType"] = "IrrigationEvent";
+    object["sectorId"] = sectorId;
+    object["status"] = waterPumpStatus;
+    //object["date"] = null;
+
+    serializeJson(doc, body);
+
+    String endpoint = SERVER_URI + "/events/" + FARM_ID;
+
+    if (WiFi.status() == WL_CONNECTED) {
+        sendRequest(endpoint.c_str(), body);
+    } else {
+        Serial.println("Error posting IrrigationEvent, cause WiFi connection");
+        saveRetry(endpoint.c_str(), body);
+    }
+}
+
+void saveRetry(const char* endpoint, const char* body) {
+    Serial.println("Save retry event");
+    File file = SPIFFS.open("/events.txt", FILE_WRITE);
+    file.print(String(endpoint) + "-" + String(body));
+    file.close();
+}
+
+void retryEvents() {
+    if (WiFi.status() == WL_CONNECTED) {
+        File file = SPIFFS.open("/events.txt");
+        while(file.available()) {
+            Serial.println("-----------------------------------");
+            Serial.println("Retrying event " + file.read());
+            //post to server with endpoint and body
+        }
+        file.close();
+        SPIFFS.remove("/events.txt"); //Delete file when finish to reprocess all lost events
+    } else {
+        Serial.println("Error retrying events cause WiFi connection");
+    } 
 }
