@@ -52,7 +52,7 @@ String SERVER_URI = String("https://smartfarmunlam.azurewebsites.net");
 String FARM_ID = String("62acc77270752f2b6bbb88ee");
 
 //Values
-const double ERROR_VALUE = -99;
+const double ERROR_VALUE = -99.0;
 //DHT22
 float temp = ERROR_VALUE;
 float hum = ERROR_VALUE;
@@ -64,67 +64,32 @@ const int WATER_VALUE = 1250;
 const float ZERO_DEGRESS = 0.0;
 
 //------------------------CLASS AND STRUCTS------------------------
-//Classes
-class Measure {
-    public: 
-        //time_t dateTime;
-        float value;
+typedef struct {
+    //time_t dateTime;
+    float value;
+} Measure;
 
-    Measure() {
-        value = ERROR_VALUE;
-    }
+typedef struct {
+    String code;
+    Measure measure;
+} Sensor;
 
-    Measure(double value) {
-        value = value;
-    }
-};
-
-class Sensor {
-    public:
-        std::string code;
-        Measure measure;
-    
-    Sensor(std::string value) {
-        code = value;
-        measure = Measure(ERROR_VALUE);
-    }
-
-    Sensor(std::string value, Measure measure) {
-        code = value;
-        measure = measure;
-    }
-};
-
-class Sector {
-    public:
-        String id;
-        String crop;
-        float minHumidity;
-
-    Sector() {
-        id = "";
-        crop = "";
-        minHumidity = 0.0;
-    }
-
-    Sector(String idValue, String cropValue, float minHumidityValue) {
-        id = idValue;
-        crop = cropValue;
-        minHumidity = minHumidityValue;
-    }
-
-};
+typedef struct {
+    String id;
+    String crop;
+    float minHumidity;
+} Sector;
 
 //------------------------SENSORS DECLARATION------------------------
 //Sensors declaration
-Sensor tempSensor = Sensor("AT1");
-Sensor humiditySensor = Sensor("AH1");
-Sensor soilMoistureSensor1 = Sensor("SH1");
-Sensor soilMoistureSensor2 = Sensor("SH2");
-Sensor soilMoistureSensor3 = Sensor("SH3");
-Sensor soilTempSensor1 = Sensor("ST1") ;
-Sensor soilTempSensor2 = Sensor("ST2");
-Sensor soilTempSensor3 = Sensor("ST3");
+Sensor tempSensor = {"AT1", ERROR_VALUE};
+Sensor humiditySensor = {"AH1", ERROR_VALUE};
+Sensor soilMoistureSensor1 = {"SH1", ERROR_VALUE};
+Sensor soilMoistureSensor2 = {"SH2", ERROR_VALUE};
+Sensor soilMoistureSensor3 = {"SH3", ERROR_VALUE};
+Sensor soilTempSensor1 = {"ST1", ERROR_VALUE};
+Sensor soilTempSensor2 = {"ST2", ERROR_VALUE};
+Sensor soilTempSensor3 = {"ST3", ERROR_VALUE};
 
 Sensor soilMoistureArray[] = {soilMoistureSensor1, soilMoistureSensor2, soilMoistureSensor3}; 
 Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor2, soilTempSensor3}; 
@@ -134,7 +99,7 @@ String waterPumpStatus = "OFF";
 const int VALVES[] = {PIN_VALVE_1, PIN_VALVE_2, PIN_VALVE_3};
 bool irrigationChecker = true;
 
-int cantSectors = 0;
+int sectorsCount = 0;
 Sector sectors[3] = {};
 
 //------------------------MAIN PROGRAM------------------------
@@ -147,7 +112,8 @@ void setup() {
     initializeSensors();
 
     //Preferences (Flash Memory)
-    preferences.begin("sectors", false);
+    preferences.begin("smartFarm", false);
+
     //Flash File System
     SPIFFS.begin(true);
 
@@ -331,7 +297,7 @@ void irrigationEventResolver() {
     digitalWrite(PIN_WATER_PUMP, HIGH); //Turn off the pump
     boolean hasToActivateWaterPump = false;
 
-    for (int i = 0; i < cantSectors; i++) {
+    for (int i = 0; i < sectorsCount; i++) {
         float humidity = soilMoistureArray[i].measure.value;
         Sector sector = sectors[i];
 
@@ -431,15 +397,28 @@ void getSectorsInfo() {
             String cropName = obj["cropType"]["name"];
             float minHumidityValue = obj["cropType"]["parameters"][0]["min"];
 
-            Sector sector = Sector(id, cropName, minHumidityValue);
+            Sector sector = {id, cropName, minHumidityValue};
             sectors[i] = sector;
             i++;
         }
-        cantSectors = i;
-        preferences.putInt("cantSectors", cantSectors);
+        sectorsCount = i;
+        preferences.putBytes("sectors", sectors, sizeof(sectors));
+        preferences.putInt("sectorsCount", sectorsCount);
     } else {
-        Serial.println("Error in WiFi connection");
-        cantSectors = preferences.getInt("cantSectors");
+        Serial.println("Error in WiFi connection, getting sectors info from flash");
+        size_t sectorsLenght = preferences.getBytesLength("sectors");
+        char buffer[sectorsLenght];
+        preferences.getBytes("sectors", buffer, sectorsLenght);
+        memcpy(sectors, buffer, sectorsLenght);
+
+        sectorsCount = preferences.getInt("sectorsCount");
+        Serial.println("\nSectors count: " + String(sectorsCount));
+        for (int i = 0; i < sectorsCount; i++) {
+            Serial.println("\nSector " + String(i+1));
+            Serial.println("Id: " + sectors[i].id);
+            Serial.println("Crop: " + sectors[i].crop);
+            Serial.println("Minhumidity: " + String(sectors[i].minHumidity));
+        }
     }
 }
 
@@ -464,7 +443,7 @@ void sendMeasuresToServer() {
     if (WiFi.status() == WL_CONNECTED) {
         sendRequest(endpoint.c_str(), body);
     } else {
-        Serial.println("Error Posting measures, causes WiFi connection");
+        Serial.println("Error Posting measures, cause WiFi connection");
         saveRetry(endpoint.c_str(), body);
     }
 }
@@ -479,13 +458,13 @@ void appendJsonObject(StaticJsonDocument<1024> &doc, Sensor sensor) {
     measure["value"] = sensor.measure.value; 
 }
 
-void sendIrrigationEventToServer(const char* sectorId, const char* waterPumpStatus) {
+void sendIrrigationEventToServer(const char* sectorId, const char* status) {
     char body[1024];
     StaticJsonDocument<1024> doc;
     JsonObject object = doc.to<JsonObject>();
     object["eventType"] = "IrrigationEvent";
     object["sectorId"] = sectorId;
-    object["status"] = waterPumpStatus;
+    object["status"] = status;
     //object["date"] = null;
 
     serializeJson(doc, body);
