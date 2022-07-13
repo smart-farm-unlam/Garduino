@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <SPIFFS.h>
-
+#include <ESP32Time.h>
 
 //------------------------CONSTANTS------------------------
 //PINS
@@ -36,20 +36,29 @@ DeviceAddress first_thermometer, second_thermometer, third_thermometer;
 //Flash preferences
 Preferences preferences;
 
+//RTC (Real Time Clock)
+ESP32Time rtc;
+
 //Software timer
 int MEASUREMENT_TIME = 10000;           //10 seconds
-unsigned long current_time, previous_time;
+unsigned long measurenment_current_time, measurenment_previous_time;
+
 int IRRIGATION_LOOP_TIME = 30000;       //30 seconds
 unsigned long irrigation_current_time, irrigation_previous_time;
+
 int ANTI_FROST_LOOP_TIME = 60000;       //60 seconds
 unsigned long anti_frost_current_time, anti_frost_previous_time;
 
+int RTC_LOOP_TIME = 600000;              //10 minutes
+unsigned long rtc_current_time, rtc_previous_time;
+
 //Server path
-//String SERVER_URI = String("http://192.168.1.45:8080");
-String SERVER_URI = String("https://smartfarmunlam.azurewebsites.net");
+//String SERVER_URI = String("http://192.168.1.47:8080");
+String SERVER_URI = "https://smartfarmunlam.azurewebsites.net";
+String TIME_URL_URI = "https://worldtimeapi.org/api/timezone/America/Argentina/Buenos_Aires";
 
 //FARM ID
-String FARM_ID = String("62acc77270752f2b6bbb88ee");
+String FARM_ID = "62acc77270752f2b6bbb88ee";
 
 //Values
 const double ERROR_VALUE = -99.0;
@@ -63,10 +72,10 @@ const int WATER_VALUE = 1250;
 //ZERO DEGRESS
 const float ZERO_DEGRESS = 0.0;
 
-//------------------------CLASS AND STRUCTS------------------------
+//------------------------STRUCTS------------------------
 typedef struct {
-    //time_t dateTime;
     float value;
+    String dateTime;
 } Measure;
 
 typedef struct {
@@ -107,9 +116,17 @@ Sector sectors[3] = {};
 void setup() {
     Serial.begin(115200);
 
-    initWiFi();
+    //Pins configuration
     configPins();
+
+    //Initialize sensors
     initializeSensors();
+
+    //Connect to WiFi
+    initWiFi();    
+
+    //Sync RTC Clock
+    syncRTC();
 
     //Preferences (Flash Memory)
     preferences.begin("smartFarm", false);
@@ -125,15 +142,16 @@ void setup() {
 }
 
 void loop() {
-    current_time = millis();
+    measurenment_current_time = millis();
     irrigation_current_time = millis();
     anti_frost_current_time = millis();
+    rtc_current_time = millis();
 
-    if ((current_time - previous_time) > MEASUREMENT_TIME) {
+    if ((measurenment_current_time - measurenment_previous_time) > MEASUREMENT_TIME) {
         Serial.println("-----------------------------------");
         Serial.println("Start collecting data from sensors");
         measuresResolver();
-        previous_time = millis();
+        measurenment_previous_time = millis();
     }
 
     if ((irrigation_current_time - irrigation_previous_time) > IRRIGATION_LOOP_TIME && irrigationChecker == true) {
@@ -151,17 +169,28 @@ void loop() {
         //Also use this timer to retry lost events
         retryEvents();
     }
-    
+
+    if ((rtc_current_time - rtc_previous_time) > RTC_LOOP_TIME) {
+        //Synchonized RTC clock with server
+        syncRTC();
+        rtc_previous_time = millis();
+    }
+
 }
 
 //------------------------INIT FUNCTIONS------------------------
 void initTimers() {
-    current_time = millis();
-    previous_time = millis();
+    measurenment_current_time = millis();
+    measurenment_previous_time = millis();
+
     irrigation_current_time = millis();
     irrigation_previous_time = millis();
+
     anti_frost_current_time = millis();
     anti_frost_previous_time = millis();
+
+    rtc_current_time = millis();
+    rtc_previous_time = millis();
 }
 
 void initWiFi() {
@@ -186,6 +215,44 @@ void configPins() {
     digitalWrite(PIN_VALVE_2, HIGH);
     digitalWrite(PIN_VALVE_3, HIGH);
     digitalWrite(PIN_WATER_PUMP, HIGH);
+}
+
+void syncRTC() {
+    Serial.println("-----------------------------------");
+    Serial.println("Synchronizing clock");
+    if (WiFi.status() == WL_CONNECTED) {
+        String endpoint = TIME_URL_URI;
+        String responseRTC = getRequest(endpoint.c_str());
+
+        responseRTC.replace("\n", "");
+        responseRTC.trim();
+
+        char jsonOutput[768];
+        strcpy(jsonOutput, responseRTC.c_str());
+
+        Serial.println("JsonOutput: " + String(jsonOutput));
+
+        StaticJsonDocument<768> doc;
+        DeserializationError err = deserializeJson(doc, jsonOutput);
+
+        if (err) {
+            Serial.print("deserializeJson() failed with code ");
+            Serial.println(err.c_str());
+            return;
+        }
+
+        long unixtime = doc["unixtime"];
+
+        rtc.setTime(unixtime);
+
+        String dateTime = getDateTime();
+
+        Serial.println("DateTime: " + String(dateTime));
+        Serial.println("RTC actualizado");
+
+    } else {
+        Serial.println("Error in WiFi connection, synchronized clock fail");
+    }
 }
 
 void initializeSensors() {
@@ -230,6 +297,13 @@ void printAddress(DeviceAddress deviceAddress)
   }
 }
 
+String getDateTime() {
+    char buff[25];
+    time_t now = time(NULL);
+    strftime(buff, 25, "%FT%TZ", localtime(&now));
+    return buff;
+}
+
 //------------------------------RESOLVERS------------------------------------
 void measuresResolver() {
     readTemperatureAndHumidity();
@@ -251,8 +325,12 @@ void readTemperatureAndHumidity() {
     Serial.println("Temp: " + String(temp, 1) + "°C");
     Serial.println("Hum: " + String(hum, 1) + "%");
 
+    String dateTime = getDateTime();
+
     tempSensor.measure.value = temp;
+    tempSensor.measure.dateTime = dateTime;
     humiditySensor.measure.value = hum;
+    humiditySensor.measure.dateTime = dateTime;
 }
 
 void readSoilMoistureSensors() {
@@ -267,9 +345,10 @@ void setSoilMoisture(int pin, int index) {
     if (soilMoistureValuePercent <= 0 || soilMoistureValuePercent > 100) {
         soilMoistureValuePercent = ERROR_VALUE;
     }
-    Serial.println("Humidity value " + String(index) + ": " + String(soilMoistureValue));
+    Serial.println("Soil Humidity value " + String(index) + ": " + String(soilMoistureValue));
     Serial.println("Soil Humidity percentage "+ String(index) + ": " + String(soilMoistureValuePercent) + "%");
     soilMoistureArray[index-1].measure.value = soilMoistureValuePercent;
+    soilMoistureArray[index-1].measure.dateTime = getDateTime();
 }
 
 void readSoilTemperatureSensors() {
@@ -287,8 +366,9 @@ void setSoilTemperature(DeviceAddress deviceAddress, int index)
     Serial.println("Error ["+ String(index) + "]: Could not read temperature data");
     tempC = ERROR_VALUE;
   }
-  Serial.println("Temp " + String(index) + ": " + String(tempC, 1) + "°C");
+  Serial.println("Soil Temperature " + String(index) + ": " + String(tempC, 1) + "°C");
   soilTemperatureArray[index-1].measure.value = tempC;
+  soilTemperatureArray[index-1].measure.dateTime = getDateTime();
 }
 
 void irrigationEventResolver() {
@@ -385,8 +465,9 @@ void getSectorsInfo() {
         DeserializationError err = deserializeJson(doc, jsonOutput);
 
         if (err) {
-            Serial.print(F("deserializeJson() failed with code "));
-            Serial.println(err.f_str());
+            Serial.print("deserializeJson() failed with code ");
+            Serial.println(err.c_str());
+            return;
         }
 
         JsonArray sectorsArr = doc.as<JsonArray>();
@@ -425,15 +506,15 @@ void getSectorsInfo() {
 void sendMeasuresToServer() {
     char body[1024];
     StaticJsonDocument<1024> doc;
-    appendJsonObject(doc, tempSensor);
-    appendJsonObject(doc, humiditySensor);
+    appendSensorJsonObject(doc, tempSensor);
+    appendSensorJsonObject(doc, humiditySensor);
 
     for (Sensor sensorMoisture : soilMoistureArray) {
-        appendJsonObject(doc, sensorMoisture);
+        appendSensorJsonObject(doc, sensorMoisture);
     }
 
     for (Sensor sensorTemperature : soilTemperatureArray) {
-        appendJsonObject(doc, sensorTemperature);
+        appendSensorJsonObject(doc, sensorTemperature);
     }
 
     serializeJson(doc, body);
@@ -448,14 +529,15 @@ void sendMeasuresToServer() {
     }
 }
 
-void appendJsonObject(StaticJsonDocument<1024> &doc, Sensor sensor) {
+void appendSensorJsonObject(StaticJsonDocument<1024> &doc, Sensor sensor) {
     JsonObject sensorDoc = doc.createNestedObject();
     sensorDoc["code"] = sensor.code;
 
     JsonArray measuresArray = sensorDoc.createNestedArray("measures");
 
     JsonObject measure = measuresArray.createNestedObject();
-    measure["value"] = sensor.measure.value; 
+    measure["value"] = sensor.measure.value;
+    measure["dateTime"] = sensor.measure.dateTime;
 }
 
 void sendIrrigationEventToServer(const char* sectorId, const char* status) {
@@ -465,7 +547,7 @@ void sendIrrigationEventToServer(const char* sectorId, const char* status) {
     object["eventType"] = "IrrigationEvent";
     object["sectorId"] = sectorId;
     object["status"] = status;
-    //object["date"] = null;
+    object["date"] = getDateTime();
 
     serializeJson(doc, body);
 
@@ -485,7 +567,7 @@ void sendAntiFrostEventToServer(const char* antiFrostSystemStatus) {
     JsonObject object = doc.to<JsonObject>();
     object["eventType"] = "AntiFrostEvent";
     object["status"] = antiFrostSystemStatus;
-    //object["date"] = null;
+    object["date"] = getDateTime();
 
     serializeJson(doc, body);
 
