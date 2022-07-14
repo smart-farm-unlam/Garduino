@@ -105,11 +105,14 @@ Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor2, soilTempSenso
 
 //Irrigation system
 String waterPumpStatus = "OFF";
-const int VALVES[] = {PIN_VALVE_1, PIN_VALVE_2, PIN_VALVE_3};
-bool irrigationChecker = true;
+const int IRRIGATION_VALVES[] = {PIN_VALVE_1, PIN_VALVE_2, PIN_VALVE_3};
+String irrigationChecker = "ON";
 
 int sectorsCount = 0;
 Sector sectors[3] = {};
+
+//AntiFrostSystem
+String antiFrostSystem = "OFF";
 
 //------------------------MAIN PROGRAM------------------------
 
@@ -154,7 +157,7 @@ void loop() {
         measurenment_previous_time = millis();
     }
 
-    if ((irrigation_current_time - irrigation_previous_time) > IRRIGATION_LOOP_TIME && irrigationChecker == true) {
+    if ((irrigation_current_time - irrigation_previous_time) > IRRIGATION_LOOP_TIME && irrigationChecker == "ON") {
         Serial.println("-----------------------------------");
         Serial.println("Control irrigation");
         irrigationEventResolver();
@@ -167,7 +170,7 @@ void loop() {
         antiFrostEventResolver();
         anti_frost_previous_time = millis();
         //Also use this timer to retry lost events
-        retryEvents();
+        //retryEvents();
     }
 
     if ((rtc_current_time - rtc_previous_time) > RTC_LOOP_TIME) {
@@ -210,11 +213,14 @@ void configPins() {
     pinMode(PIN_VALVE_1, OUTPUT);
     pinMode(PIN_VALVE_2, OUTPUT);
     pinMode(PIN_VALVE_3, OUTPUT);
+    pinMode(PIN_VALVE_ANTI_FROST, OUTPUT);
     pinMode(PIN_WATER_PUMP, OUTPUT);
+    //Turn off all rele
     digitalWrite(PIN_VALVE_1, HIGH);
     digitalWrite(PIN_VALVE_2, HIGH);
     digitalWrite(PIN_VALVE_3, HIGH);
-    digitalWrite(PIN_WATER_PUMP, HIGH);
+    digitalWrite(PIN_VALVE_ANTI_FROST, HIGH);
+    digitalWrite(PIN_WATER_PUMP, LOW); //This rele is HIGH LEVEL TRIGGER
 }
 
 void syncRTC() {
@@ -374,7 +380,7 @@ void setSoilTemperature(DeviceAddress deviceAddress, int index)
 void irrigationEventResolver() {
     Serial.println("Checking sectors humidity");
 
-    digitalWrite(PIN_WATER_PUMP, HIGH); //Turn off the pump
+    digitalWrite(PIN_WATER_PUMP, LOW); //Turn off the pump
     boolean hasToActivateWaterPump = false;
 
     for (int i = 0; i < sectorsCount; i++) {
@@ -383,16 +389,16 @@ void irrigationEventResolver() {
 
         if(humidity != ERROR_VALUE && humidity < sector.minHumidity) {
             //If the valve is closed open it
-            if(digitalRead(VALVES[i]) == HIGH) { 
-                digitalWrite(VALVES[i], LOW);
+            if(digitalRead(IRRIGATION_VALVES[i]) == HIGH) { 
+                digitalWrite(IRRIGATION_VALVES[i], LOW);
                 Serial.println("Valve " + String(i+1) + " opened");
                 sendIrrigationEventToServer(sector.id.c_str(), "ON");
             }
             hasToActivateWaterPump = true;
         } else if (humidity == ERROR_VALUE || humidity >= sector.minHumidity) {
             //If the valve is open closed it
-            if(digitalRead(VALVES[i]) == LOW) { 
-                digitalWrite(VALVES[i], HIGH);
+            if(digitalRead(IRRIGATION_VALVES[i]) == LOW) { 
+                digitalWrite(IRRIGATION_VALVES[i], HIGH);
                 Serial.println("Valve " + String(i+1) + " closed");
                 sendIrrigationEventToServer(sector.id.c_str(), "OFF");
             }
@@ -404,18 +410,18 @@ void irrigationEventResolver() {
         //Timers check every 2 seconds
         MEASUREMENT_TIME = 2000;
         IRRIGATION_LOOP_TIME = 2000; 
-        digitalWrite(PIN_WATER_PUMP, LOW); //turn on water pump
+        digitalWrite(PIN_WATER_PUMP, HIGH); //turn on water pump
         Serial.println("Water pump on");
         waterPumpStatus = "ON";
     } else if (hasToActivateWaterPump == true) {
         delay(3000);
-        digitalWrite(PIN_WATER_PUMP, LOW); //turn it again
+        digitalWrite(PIN_WATER_PUMP, HIGH); //turn it again
         Serial.println("Water pump on again");
     }
 
     if (waterPumpStatus == "ON" && hasToActivateWaterPump == false) {
         Serial.println("All sectors ok, turn off water pump");
-        digitalWrite(PIN_WATER_PUMP, HIGH); //turn it off
+        digitalWrite(PIN_WATER_PUMP, LOW); //turn it off
         waterPumpStatus = "OFF";
         //reset timers to normal
         MEASUREMENT_TIME = 10000;
@@ -424,24 +430,55 @@ void irrigationEventResolver() {
 }
 
 void antiFrostEventResolver() {
-    Serial.println("Checking temperature");
+    Serial.println("Checking ambient temperature");
 
     float temperature = tempSensor.measure.value;
-
+    
     if (temperature != ERROR_VALUE && temperature < ZERO_DEGRESS) {
-        digitalWrite(PIN_VALVE_ANTI_FROST, LOW);    //open the anti_frost valve
-        digitalWrite(PIN_WATER_PUMP, LOW);          //turn on water pump
-        Serial.println("AntiFrost system activated");
-        irrigationChecker = "false";
-        sendAntiFrostEventToServer("ON");
+        if(antiFrostSystem == "OFF") {
+            closeIrrigationValves();
+            digitalWrite(PIN_VALVE_ANTI_FROST, LOW);    //open the anti_frost valve
+            digitalWrite(PIN_WATER_PUMP, HIGH);         //turn on water pump
+            Serial.println("Water pump on");
+            waterPumpStatus = "ON";
+
+            Serial.println("AntiFrost system activated");
+            irrigationChecker = "OFF"; //Turn off irrigationControl until temperature is ok.
+            antiFrostSystem = "ON";
+            sendAntiFrostEventToServer("ON");
+        } else {
+            Serial.println("Temperature is still below 0°C, AntiFrost system working");
+        }
+        
     } else if (temperature == ERROR_VALUE || temperature >= ZERO_DEGRESS) {
-        digitalWrite(PIN_VALVE_ANTI_FROST, HIGH);   //close the anti_frost valve
-        digitalWrite(PIN_WATER_PUMP, HIGH);         //turn off water pump
-        Serial.println("AntiFrost system deactivated");
-        irrigationChecker = "true";
-        sendAntiFrostEventToServer("OFF");
+        //If valve is open closed it
+        if(digitalRead(PIN_VALVE_ANTI_FROST) == LOW) {
+            digitalWrite(PIN_VALVE_ANTI_FROST, HIGH);   //close the anti_frost valve
+            digitalWrite(PIN_WATER_PUMP, LOW);         //turn off water pump
+            Serial.println("Water pump off");
+            waterPumpStatus = "OFF";
+
+            Serial.println("AntiFrost system deactivated");
+            irrigationChecker = "ON"; //Turn on again irrigationControl.
+            antiFrostSystem = "OFF";
+            sendAntiFrostEventToServer("OFF");
+        }
+        Serial.println("Ambient temperature is ok.");
     }
     
+}
+
+//Close all irrigation valves cause we are using antifrost system
+void closeIrrigationValves() {
+    for (int i = 0; i < sectorsCount; i++) {
+        //If valve if open is because it started an irrigation event for that sector,
+        //so we have to notify that irrigation event off to the server
+        if(digitalRead(IRRIGATION_VALVES[i] == LOW)) {
+            Sector sector = sectors[i];
+            digitalWrite(IRRIGATION_VALVES[i], HIGH); //turn off valve
+            sendIrrigationEventToServer(sector.id.c_str(), "OFF");
+        }
+    }
 }
 
 //------------------------HTTP REQUEST------------------------
@@ -452,6 +489,11 @@ void getSectorsInfo() {
     if (WiFi.status() == WL_CONNECTED) {
         String endpoint = SERVER_URI + "/sectors/" + FARM_ID + "/crop-types";
         String sectorsData = getRequest(endpoint.c_str());
+
+        if(sectorsData == "{}") {
+            getSectorsFromFlashMem();
+            return;
+        }
 
         sectorsData.replace("\n", "");
         sectorsData.trim();
@@ -486,20 +528,8 @@ void getSectorsInfo() {
         preferences.putBytes("sectors", sectors, sizeof(sectors));
         preferences.putInt("sectorsCount", sectorsCount);
     } else {
-        Serial.println("Error in WiFi connection, getting sectors info from flash");
-        size_t sectorsLenght = preferences.getBytesLength("sectors");
-        char buffer[sectorsLenght];
-        preferences.getBytes("sectors", buffer, sectorsLenght);
-        memcpy(sectors, buffer, sectorsLenght);
-
-        sectorsCount = preferences.getInt("sectorsCount");
-        Serial.println("\nSectors count: " + String(sectorsCount));
-        for (int i = 0; i < sectorsCount; i++) {
-            Serial.println("\nSector " + String(i+1));
-            Serial.println("Id: " + sectors[i].id);
-            Serial.println("Crop: " + sectors[i].crop);
-            Serial.println("Minhumidity: " + String(sectors[i].minHumidity));
-        }
+        Serial.println("Error in WiFi connection");
+        getSectorsFromFlashMem();
     }
 }
 
@@ -522,7 +552,10 @@ void sendMeasuresToServer() {
     String endpoint = SERVER_URI + "/sensors/" + FARM_ID + "/events";
 
     if (WiFi.status() == WL_CONNECTED) {
-        sendRequest(endpoint.c_str(), body);
+        int result = sendRequest(endpoint.c_str(), body);
+        if (result != 200) {
+            saveRetry(endpoint.c_str(), body);
+        }
     } else {
         Serial.println("Error Posting measures, cause WiFi connection");
         saveRetry(endpoint.c_str(), body);
@@ -554,7 +587,10 @@ void sendIrrigationEventToServer(const char* sectorId, const char* status) {
     String endpoint = SERVER_URI + "/events/" + FARM_ID;
 
     if (WiFi.status() == WL_CONNECTED) {
-        sendRequest(endpoint.c_str(), body);
+        int result = sendRequest(endpoint.c_str(), body);
+        if (result != 200) {
+            saveRetry(endpoint.c_str(), body);
+        }
     } else {
         Serial.println("Error posting IrrigationEvent, cause WiFi connection");
         saveRetry(endpoint.c_str(), body);
@@ -574,7 +610,10 @@ void sendAntiFrostEventToServer(const char* antiFrostSystemStatus) {
     String endpoint = SERVER_URI + "/events/" + FARM_ID;
 
     if (WiFi.status() == WL_CONNECTED) {
-        sendRequest(endpoint.c_str(), body);
+        int result = sendRequest(endpoint.c_str(), body);
+        if (result != 200) {
+            saveRetry(endpoint.c_str(), body);
+        }
     } else {
         Serial.println("Error posting IrrigationEvent, cause WiFi connection");
         saveRetry(endpoint.c_str(), body);
@@ -602,7 +641,7 @@ String getRequest(const char* endpoint) {
     return response;
 }
 
-void sendRequest(const char* endpoint, const char* body) {
+int sendRequest(const char* endpoint, const char* body) {
     Serial.println("\nSending POST request to " + String(endpoint));
     Serial.println("Body: " + String(body));
 
@@ -614,11 +653,34 @@ void sendRequest(const char* endpoint, const char* body) {
 
     if (httpCode > 0) {
         Serial.println("HTTP Response code: " +  String(httpCode));
+        
     } else {
         Serial.println("Error on POST Request, error code: " + String(httpCode));
     }
 
     client.end();
+
+    return httpCode;
+}
+
+//------------------------GET FROM FLASH MEMORY------------------------
+
+
+void getSectorsFromFlashMem() {
+    Serial.println("Getting sectors info from flash");
+    size_t sectorsLenght = preferences.getBytesLength("sectors");
+    char buffer[sectorsLenght];
+    preferences.getBytes("sectors", buffer, sectorsLenght);
+    memcpy(sectors, buffer, sectorsLenght);
+
+    sectorsCount = preferences.getInt("sectorsCount");
+    Serial.println("\nSectors count: " + String(sectorsCount));
+    for (int i = 0; i < sectorsCount; i++) {
+        Serial.println("\nSector " + String(i+1));
+        Serial.println("Id: " + sectors[i].id);
+        Serial.println("Crop: " + sectors[i].crop);
+        Serial.println("Minhumidity: " + String(sectors[i].minHumidity));
+    }
 }
 
 //------------------------RETRY SCHEMA------------------------
