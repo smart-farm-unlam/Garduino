@@ -212,6 +212,7 @@
                 "/home/facundo.mediotte/.arduino15/packages/esp32/hardware/esp32/2.0.3/libraries/Preferences/src",
                 "/home/facundo.mediotte/.arduino15/packages/esp32/hardware/esp32/2.0.3/libraries/SPIFFS/src",
                 "/home/facundo.mediotte/.arduino15/packages/esp32/hardware/esp32/2.0.3/libraries/FS/src",
+                "/home/facundo.mediotte/Arduino/libraries/ESP32Time",
                 "/home/facundo.mediotte/Arduino/libraries/Adafruit_Unified_Sensor",
                 "/home/facundo.mediotte/.arduino15/packages/esp32/tools/xtensa-esp32-elf-gcc/gcc8_4_0-esp-2021r2-patch3/xtensa-esp32-elf/include/c++/8.4.0",
                 "/home/facundo.mediotte/.arduino15/packages/esp32/tools/xtensa-esp32-elf-gcc/gcc8_4_0-esp-2021r2-patch3/xtensa-esp32-elf/include/c++/8.4.0/xtensa-esp32-elf",
