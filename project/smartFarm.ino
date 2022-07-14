@@ -21,7 +21,7 @@ const int PIN_VALVE_1 = 15;
 const int PIN_VALVE_2 = 4;
 const int PIN_VALVE_3 = 5;
 const int PIN_VALVE_ANTI_FROST = 18;
-const int PIN_WATER_PUMP = 14;
+const int PIN_WATER_PUMP = 21;
 
 //WIFI Settings
 const char* ssid = "Movistar14";
