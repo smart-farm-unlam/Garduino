@@ -169,7 +169,7 @@ void loop() {
         antiFrostEventResolver();
         anti_frost_previous_time = millis();
         //Also use this timer to retry lost events
-        //retryEvents();
+        retryEvents();
     }
 
     if ((rtc_current_time - rtc_previous_time) > RTC_LOOP_TIME) {
@@ -684,17 +684,17 @@ void getSectorsFromFlashMem() {
 //------------------------RETRY SCHEMA------------------------
 void saveRetry(const char* endpoint, const char* body) {
     Serial.println("Save retry event");
-    File file = SPIFFS.open("/events.txt", FILE_WRITE);
-    file.print(String(endpoint) + "-" + String(body));
+    File file = SPIFFS.open("/events.txt", FILE_APPEND);
+    file.print(String(endpoint) + "-" + String(body) + "\n");
     file.close();
 }
 
 void retryEvents() {
     if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("Retrying lost events");
         File file = SPIFFS.open("/events.txt");
         while(file.available()) {
-            Serial.println("-----------------------------------");
-            Serial.println("Retrying event " + file.read());
+            Serial.write(file.read());
             //post to server with endpoint and body
         }
         file.close();
