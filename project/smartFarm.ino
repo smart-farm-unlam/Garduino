@@ -106,7 +106,6 @@ Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor2, soilTempSenso
 //Irrigation system
 String waterPumpStatus = "OFF";
 const int IRRIGATION_VALVES[] = {PIN_VALVE_1, PIN_VALVE_2, PIN_VALVE_3};
-String irrigationChecker = "ON";
 
 int sectorsCount = 0;
 Sector sectors[3] = {};
@@ -157,7 +156,7 @@ void loop() {
         measurenment_previous_time = millis();
     }
 
-    if ((irrigation_current_time - irrigation_previous_time) > IRRIGATION_LOOP_TIME && irrigationChecker == "ON") {
+    if ((irrigation_current_time - irrigation_previous_time) > IRRIGATION_LOOP_TIME && antiFrostSystem == "OFF") {
         Serial.println("-----------------------------------");
         Serial.println("Control irrigation");
         irrigationEventResolver();
@@ -380,7 +379,7 @@ void setSoilTemperature(DeviceAddress deviceAddress, int index)
 void irrigationEventResolver() {
     Serial.println("Checking sectors humidity");
 
-    digitalWrite(PIN_WATER_PUMP, LOW); //Turn off the pump
+    // digitalWrite(PIN_WATER_PUMP, LOW); //Turn off the pump
     boolean hasToActivateWaterPump = false;
 
     for (int i = 0; i < sectorsCount; i++) {
@@ -413,11 +412,12 @@ void irrigationEventResolver() {
         digitalWrite(PIN_WATER_PUMP, HIGH); //turn on water pump
         Serial.println("Water pump on");
         waterPumpStatus = "ON";
-    } else if (hasToActivateWaterPump == true) {
-        delay(3000);
-        digitalWrite(PIN_WATER_PUMP, HIGH); //turn it again
-        Serial.println("Water pump on again");
-    }
+    } 
+    // else if (hasToActivateWaterPump == true) {
+    //     delay(3000);
+    //     digitalWrite(PIN_WATER_PUMP, HIGH); //turn it again
+    //     Serial.println("Water pump on again");
+    // }
 
     if (waterPumpStatus == "ON" && hasToActivateWaterPump == false) {
         Serial.println("All sectors ok, turn off water pump");
@@ -443,7 +443,6 @@ void antiFrostEventResolver() {
             waterPumpStatus = "ON";
 
             Serial.println("AntiFrost system activated");
-            irrigationChecker = "OFF"; //Turn off irrigationControl until temperature is ok.
             antiFrostSystem = "ON";
             sendAntiFrostEventToServer("ON");
         } else {
@@ -459,7 +458,6 @@ void antiFrostEventResolver() {
             waterPumpStatus = "OFF";
 
             Serial.println("AntiFrost system deactivated");
-            irrigationChecker = "ON"; //Turn on again irrigationControl.
             antiFrostSystem = "OFF";
             sendAntiFrostEventToServer("OFF");
         }
