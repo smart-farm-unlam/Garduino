@@ -525,6 +525,7 @@ void getSectorsInfo() {
         sectorsCount = i;
         preferences.putBytes("sectors", sectors, sizeof(sectors));
         preferences.putInt("sectorsCount", sectorsCount);
+        Serial.println("Persist sectors info on flash memory");
     } else {
         Serial.println("Error in WiFi connection");
         getSectorsFromFlashMem();
