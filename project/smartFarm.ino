@@ -40,13 +40,13 @@ Preferences preferences;
 ESP32Time rtc;
 
 //Software timer
-int MEASUREMENT_TIME = 10000;           //10 seconds
+int MEASUREMENT_TIME = 30000;           //30 seconds
 unsigned long measurenment_current_time, measurenment_previous_time;
 
-int IRRIGATION_LOOP_TIME = 30000;       //30 seconds
+int IRRIGATION_LOOP_TIME = 60000;       //1 minutes
 unsigned long irrigation_current_time, irrigation_previous_time;
 
-int ANTI_FROST_LOOP_TIME = 60000;       //60 seconds
+int ANTI_FROST_LOOP_TIME = 120000;       //2 minutes
 unsigned long anti_frost_current_time, anti_frost_previous_time;
 
 int RTC_LOOP_TIME = 600000;              //10 minutes
@@ -406,18 +406,13 @@ void irrigationEventResolver() {
     }
 
     if(waterPumpStatus == "OFF" && hasToActivateWaterPump == true) {
-        //Timers check every 2 seconds
-        MEASUREMENT_TIME = 2000;
-        IRRIGATION_LOOP_TIME = 2000; 
+        //Timers check every 10 seconds
+        MEASUREMENT_TIME = 10000;
+        IRRIGATION_LOOP_TIME = 10000; 
         digitalWrite(PIN_WATER_PUMP, HIGH); //turn on water pump
         Serial.println("Water pump on");
         waterPumpStatus = "ON";
-    } 
-    // else if (hasToActivateWaterPump == true) {
-    //     delay(3000);
-    //     digitalWrite(PIN_WATER_PUMP, HIGH); //turn it again
-    //     Serial.println("Water pump on again");
-    // }
+    }
 
     if (waterPumpStatus == "ON" && hasToActivateWaterPump == false) {
         Serial.println("All sectors ok, turn off water pump");
