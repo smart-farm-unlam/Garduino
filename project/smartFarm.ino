@@ -22,6 +22,7 @@ const int PIN_VALVE_2 = 4;
 const int PIN_VALVE_3 = 5;
 const int PIN_VALVE_ANTI_FROST = 18;
 const int PIN_WATER_PUMP = 21;
+const int PIN_LDR = 36;
 
 //WIFI Settings
 const char* ssid = "Movistar14";
@@ -99,6 +100,7 @@ Sensor soilMoistureSensor3 = {"SH3", ERROR_VALUE};
 Sensor soilTempSensor1 = {"ST1", ERROR_VALUE};
 Sensor soilTempSensor2 = {"ST2", ERROR_VALUE};
 Sensor soilTempSensor3 = {"ST3", ERROR_VALUE};
+Sensor ldrSensor = {"LL1", ERROR_VALUE};
 
 Sensor soilMoistureArray[] = {soilMoistureSensor1, soilMoistureSensor2, soilMoistureSensor3}; 
 Sensor soilTemperatureArray[] = {soilTempSensor1, soilTempSensor2, soilTempSensor3}; 
@@ -314,6 +316,7 @@ void measuresResolver() {
     readTemperatureAndHumidity();
     readSoilMoistureSensors();
     readSoilTemperatureSensors();
+    readLightValue();
     sendMeasuresToServer();
 }
 
@@ -374,6 +377,17 @@ void setSoilTemperature(DeviceAddress deviceAddress, int index)
   Serial.println("Soil Temperature " + String(index) + ": " + String(tempC, 1) + "°C");
   soilTemperatureArray[index-1].measure.value = tempC;
   soilTemperatureArray[index-1].measure.dateTime = getDateTime();
+}
+
+void readLightValue() {
+    int lightValue = analogRead(PIN_LDR);
+    int lightValuePercent = map(lightValue, 0, 4095, 0, 100);
+
+    Serial.println("Light value: " + String(lightValue));
+    Serial.println("Light value percentage: " + String(lightValuePercent));
+
+    ldrSensor.measure.value = lightValuePercent;
+    ldrSensor.measure.dateTime = getDateTime();
 }
 
 void irrigationEventResolver() {
@@ -532,6 +546,7 @@ void sendMeasuresToServer() {
     StaticJsonDocument<1024> doc;
     appendSensorJsonObject(doc, tempSensor);
     appendSensorJsonObject(doc, humiditySensor);
+    appendSensorJsonObject(doc, ldrSensor);
 
     for (Sensor sensorMoisture : soilMoistureArray) {
         appendSensorJsonObject(doc, sensorMoisture);
