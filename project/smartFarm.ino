@@ -40,6 +40,7 @@ Preferences preferences;
 ESP32Time rtc;
 
 //Time values
+int FIVE_SECONDS = 5000;
 int TEN_SECONDS = 10000;
 int THIRTY_SECONDS = 30000;
 int ONE_MINUTE = 60000;
@@ -142,7 +143,7 @@ void setup() {
     SPIFFS.begin(true);
 
     //Connect to WiFi
-    configWiFi();    
+    configWiFi();  
 
     //Retrieved data from server
     getSectorsInfo();
@@ -273,7 +274,8 @@ void syncRTC() {
             RTC_LOOP_TIME = TEN_MINUTES;
         } else {
             Serial.println("RTC failed to synchronized");
-            RTC_LOOP_TIME = TEN_SECONDS;
+            RTC_LOOP_TIME = FIVE_SECONDS;
+            reconnectWiFi();
         }
 
     } else {
@@ -727,7 +729,7 @@ void configWiFi() {
     if (ssid != "" || password != "") {
         WiFi.begin(ssid.c_str(), password.c_str());
         Serial.println("Connecting to WiFi...");
-        delay(5000); //Give five seconds to connect to WiFi
+        delay(FIVE_SECONDS); //Give five seconds to connect to WiFi
     } else { 
         Serial.println("No values saved for ssid or password");
     }
@@ -741,15 +743,19 @@ void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info) {
     Serial.print("WiFi connected with IP: ");
     Serial.println(WiFi.localIP());
     digitalWrite(PIN_LED_ESP, HIGH);
-    delay(1000);
+    delay(2000);
     digitalWrite(PIN_LED_ESP, LOW);    
 }
 
 void checkWiFi() {
     if (WiFi.status() == WL_DISCONNECTED) {
-        Serial.println("Trying to Reconnect WiFi");
-        WiFi.reconnect();
+        reconnectWiFi();
     }
+}
+
+void reconnectWiFi() {
+    Serial.println("Trying to Reconnect WiFi");
+    WiFi.reconnect();
 }
 
 //------------------------RETRY SCHEMA------------------------
