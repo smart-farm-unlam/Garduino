@@ -9,6 +9,8 @@
 #include <SPIFFS.h>
 #include <ESP32Time.h>
 
+using namespace std;
+
 //------------------------CONSTANTS------------------------
 //PINS
 const int PIN_DHT = 33;
@@ -23,10 +25,7 @@ const int PIN_VALVE_3 = 5;
 const int PIN_VALVE_ANTI_FROST = 18;
 const int PIN_WATER_PUMP = 21;
 const int PIN_LDR = 36;
-
-//WIFI Settings
-const char* ssid = "Movistar14";
-const char* password = "mate2306";
+const int PIN_LED_ESP = 2;
 
 //Sensor configuration
 DHT dht(PIN_DHT, DHT22);
@@ -40,18 +39,29 @@ Preferences preferences;
 //RTC (Real Time Clock)
 ESP32Time rtc;
 
+//Time values
+int TEN_SECONDS = 10000;
+int THIRTY_SECONDS = 30000;
+int ONE_MINUTE = 60000;
+int TWO_MINUTES = 2 * ONE_MINUTE;
+int FIVE_MINUTES = 5 * ONE_MINUTE;
+int TEN_MINUTES = 10 * ONE_MINUTE;
+
 //Software timer
-int MEASUREMENT_TIME = 30000;           //30 seconds
+int MEASUREMENT_TIME = THIRTY_SECONDS;
 unsigned long measurenment_current_time, measurenment_previous_time;
 
-int IRRIGATION_LOOP_TIME = 60000;       //1 minutes
+int IRRIGATION_LOOP_TIME = ONE_MINUTE;
 unsigned long irrigation_current_time, irrigation_previous_time;
 
-int ANTI_FROST_LOOP_TIME = 120000;       //2 minutes
+int ANTI_FROST_LOOP_TIME = TWO_MINUTES;
 unsigned long anti_frost_current_time, anti_frost_previous_time;
 
-int RTC_LOOP_TIME = 600000;              //10 minutes
+int RTC_LOOP_TIME = TEN_MINUTES;
 unsigned long rtc_current_time, rtc_previous_time;
+
+int CHECK_WIFI_LOOP_TIME = FIVE_MINUTES;
+unsigned long check_wifi_current_time, check_wifi_previous_time;
 
 //Server path
 //String SERVER_URI = String("http://192.168.1.47:8080");
@@ -126,30 +136,34 @@ void setup() {
     //Initialize sensors
     initializeSensors();
 
+    //Preferences (Flash Memory)
+    preferences.begin("smartFarm", false);
+    //Flash File System
+    SPIFFS.begin(true);
+
     //Connect to WiFi
-    initWiFi();    
+    configWiFi();    
+
+    //Retrieved data from server
+    getSectorsInfo();
 
     //Sync RTC Clock
     syncRTC();
 
-    //Preferences (Flash Memory)
-    preferences.begin("smartFarm", false);
-
-    //Flash File System
-    SPIFFS.begin(true);
-
-    //Retrieved data from server
-    getSectorsInfo();
+    //Close preferences
+    preferences.end();
     
     //software timer init
     initTimers();
 }
 
 void loop() {
-    measurenment_current_time = millis();
-    irrigation_current_time = millis();
-    anti_frost_current_time = millis();
-    rtc_current_time = millis();
+    long current_time = millis();
+    measurenment_current_time = current_time;
+    irrigation_current_time = current_time;
+    anti_frost_current_time = current_time;
+    rtc_current_time = current_time;
+    check_wifi_current_time = current_time;
 
     if ((measurenment_current_time - measurenment_previous_time) > MEASUREMENT_TIME) {
         Serial.println("-----------------------------------");
@@ -180,6 +194,12 @@ void loop() {
         rtc_previous_time = millis();
     }
 
+    if ((check_wifi_current_time - check_wifi_previous_time) > CHECK_WIFI_LOOP_TIME) {
+        //Check if Wifi is disconnected and reconnect
+        checkWiFi();
+        check_wifi_previous_time = millis();
+    }
+
 }
 
 //------------------------INIT FUNCTIONS------------------------
@@ -195,19 +215,9 @@ void initTimers() {
 
     rtc_current_time = millis();
     rtc_previous_time = millis();
-}
 
-void initWiFi() {
-    WiFi.begin(ssid, password);
-    Serial.print("Connecting to WiFi");
-    int retryConnection = 0;
-    while (WiFi.status() != WL_CONNECTED && retryConnection < 10) {
-        Serial.print(".");
-        delay(500);
-        retryConnection++;
-    }
-    Serial.print("Connect to the WiFi network with IP: ");
-    Serial.println(WiFi.localIP());
+    check_wifi_current_time = millis();
+    check_wifi_previous_time = millis();
 }
 
 void configPins() {
@@ -216,6 +226,8 @@ void configPins() {
     pinMode(PIN_VALVE_3, OUTPUT);
     pinMode(PIN_VALVE_ANTI_FROST, OUTPUT);
     pinMode(PIN_WATER_PUMP, OUTPUT);
+    pinMode(PIN_LED_ESP, OUTPUT);
+
     //Turn off all rele
     digitalWrite(PIN_VALVE_1, HIGH);
     digitalWrite(PIN_VALVE_2, HIGH);
@@ -255,7 +267,14 @@ void syncRTC() {
         String dateTime = getDateTime();
 
         Serial.println("DateTime: " + String(dateTime));
-        Serial.println("RTC actualizado");
+
+        if (responseRTC != "{}") {
+            Serial.println("RTC updated successfully");
+            RTC_LOOP_TIME = TEN_MINUTES;
+        } else {
+            Serial.println("RTC failed to synchronized");
+            RTC_LOOP_TIME = TEN_SECONDS;
+        }
 
     } else {
         Serial.println("Error in WiFi connection, synchronized clock fail");
@@ -421,8 +440,8 @@ void irrigationEventResolver() {
 
     if(waterPumpStatus == "OFF" && hasToActivateWaterPump == true) {
         //Timers check every 10 seconds
-        MEASUREMENT_TIME = 10000;
-        IRRIGATION_LOOP_TIME = 10000; 
+        MEASUREMENT_TIME = TEN_SECONDS;
+        IRRIGATION_LOOP_TIME = TEN_SECONDS; 
         digitalWrite(PIN_WATER_PUMP, HIGH); //turn on water pump
         Serial.println("Water pump on");
         waterPumpStatus = "ON";
@@ -433,8 +452,8 @@ void irrigationEventResolver() {
         digitalWrite(PIN_WATER_PUMP, LOW); //turn it off
         waterPumpStatus = "OFF";
         //reset timers to normal
-        MEASUREMENT_TIME = 10000;
-        IRRIGATION_LOOP_TIME = 30000;
+        MEASUREMENT_TIME = THIRTY_SECONDS;
+        IRRIGATION_LOOP_TIME = ONE_MINUTE;
     }
 }
 
@@ -692,11 +711,53 @@ void getSectorsFromFlashMem() {
     }
 }
 
+//------------------------WIFI CONFIGURATION------------------------
+void configWiFi() {
+    //Delete old config
+    WiFi.disconnect(true);
+
+    WiFi.onEvent(WiFiStationConnected, ARDUINO_EVENT_WIFI_STA_CONNECTED);
+    WiFi.onEvent(WiFiGotIP, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+
+    //TODO remove ssid and password
+    //WIFI Settings
+    String ssid = preferences.getString("ssid", "Movistar14");
+    String password = preferences.getString("password", "mate2306");
+
+    if (ssid != "" || password != "") {
+        WiFi.begin(ssid.c_str(), password.c_str());
+        Serial.println("Connecting to WiFi...");
+        delay(5000); //Give five seconds to connect to WiFi
+    } else { 
+        Serial.println("No values saved for ssid or password");
+    }
+}
+
+void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info) {
+    Serial.println("Connected to WiFi successfully!");
+}
+
+void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info) {
+    Serial.print("WiFi connected with IP: ");
+    Serial.println(WiFi.localIP());
+    digitalWrite(PIN_LED_ESP, HIGH);
+    delay(1000);
+    digitalWrite(PIN_LED_ESP, LOW);    
+}
+
+void checkWiFi() {
+    if (WiFi.status() == WL_DISCONNECTED) {
+        Serial.println("Trying to Reconnect WiFi");
+        WiFi.reconnect();
+    }
+}
+
 //------------------------RETRY SCHEMA------------------------
 void saveRetry(const char* endpoint, const char* body) {
     Serial.println("Save retry event");
     File file = SPIFFS.open("/events.txt", FILE_APPEND);
-    file.print(String(endpoint) + "-" + String(body) + "\n");
+    file.print(String(endpoint) + "\n");
+    file.print(String(body) + "\n");
     file.close();
 }
 
@@ -704,11 +765,23 @@ void retryEvents() {
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("Retrying lost events");
         File file = SPIFFS.open("/events.txt");
+        vector<String> v;
         while(file.available()) {
-            Serial.write(file.read());
-            //post to server with endpoint and body
+            v.push_back(file.readStringUntil('\n'));
         }
         file.close();
+
+        //Retry events
+        String endpoint;
+        String body;
+        for (int i = 0; i < v.size(); i=i+2) {
+            if (i % 2 == 0) {
+                endpoint = v[i];
+                body = v[i+1];
+                sendRequest(endpoint.c_str(), body.c_str());
+            }
+        }
+
         SPIFFS.remove("/events.txt"); //Delete file when finish to reprocess all lost events
     } else {
         Serial.println("Error retrying events cause WiFi connection");
