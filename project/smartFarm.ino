@@ -66,8 +66,8 @@ int CHECK_WIFI_LOOP_TIME = FIVE_MINUTES;
 unsigned long check_wifi_current_time, check_wifi_previous_time;
 
 //Server path
-String SERVER_URI = String("http://192.168.1.50:8080");
-//String SERVER_URI = "https://smartfarmunlam.azurewebsites.net";
+//String SERVER_URI = String("http://192.168.1.50:8080");
+String SERVER_URI = "https://smartfarmunlam.azurewebsites.net";
 String TIME_URL_URI = "https://worldtimeapi.org/api/timezone/America/Argentina/Buenos_Aires";
 
 //FARM ID
@@ -177,14 +177,14 @@ void loop() {
     if ((irrigation_current_time - irrigation_previous_time) > IRRIGATION_LOOP_TIME && antiFrostSystem == "OFF") {
         Serial.println("-----------------------------------");
         Serial.println("Control irrigation");
-        //irrigationEventResolver();
+        irrigationEventResolver();
         irrigation_previous_time = millis();
     }
 
     if ((anti_frost_current_time - anti_frost_previous_time) > ANTI_FROST_LOOP_TIME) {
         Serial.println("-----------------------------------");
         Serial.println("Control antifrost system");
-        //antiFrostEventResolver();
+        antiFrostEventResolver();
         anti_frost_previous_time = millis();
         //Also use this timer to retry lost events
         retryEvents();
