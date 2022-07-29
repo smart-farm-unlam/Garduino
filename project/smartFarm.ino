@@ -13,7 +13,7 @@ using namespace std;
 
 //------------------------CONSTANTS------------------------
 //PINS
-const int PIN_DHT = 33;
+const int PIN_DHT = 23;
 const int PIN_SOIL_MOISTURE_1 = 35;
 const int PIN_SOIL_MOISTURE_2 = 34;
 const int PIN_SOIL_MOISTURE_3 = 39;
