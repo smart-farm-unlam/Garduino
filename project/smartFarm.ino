@@ -38,6 +38,7 @@ Preferences preferences;
 
 //RTC (Real Time Clock)
 ESP32Time rtc;
+boolean rtc_sync = false;
 
 //Time values
 int FIVE_SECONDS = 5000;
@@ -65,8 +66,8 @@ int CHECK_WIFI_LOOP_TIME = FIVE_MINUTES;
 unsigned long check_wifi_current_time, check_wifi_previous_time;
 
 //Server path
-//String SERVER_URI = String("http://192.168.1.47:8080");
-String SERVER_URI = "https://smartfarmunlam.azurewebsites.net";
+String SERVER_URI = String("http://192.168.1.50:8080");
+//String SERVER_URI = "https://smartfarmunlam.azurewebsites.net";
 String TIME_URL_URI = "https://worldtimeapi.org/api/timezone/America/Argentina/Buenos_Aires";
 
 //FARM ID
@@ -145,11 +146,11 @@ void setup() {
     //Connect to WiFi
     configWiFi();  
 
-    //Retrieved data from server
-    getSectorsInfo();
-
     //Sync RTC Clock
     syncRTC();
+
+    //Retrieved data from server
+    getSectorsInfo();
 
     //Close preferences
     preferences.end();
@@ -176,14 +177,14 @@ void loop() {
     if ((irrigation_current_time - irrigation_previous_time) > IRRIGATION_LOOP_TIME && antiFrostSystem == "OFF") {
         Serial.println("-----------------------------------");
         Serial.println("Control irrigation");
-        irrigationEventResolver();
+        //irrigationEventResolver();
         irrigation_previous_time = millis();
     }
 
     if ((anti_frost_current_time - anti_frost_previous_time) > ANTI_FROST_LOOP_TIME) {
         Serial.println("-----------------------------------");
         Serial.println("Control antifrost system");
-        antiFrostEventResolver();
+        //antiFrostEventResolver();
         anti_frost_previous_time = millis();
         //Also use this timer to retry lost events
         retryEvents();
@@ -192,6 +193,7 @@ void loop() {
     if ((rtc_current_time - rtc_previous_time) > RTC_LOOP_TIME) {
         //Synchonized RTC clock with server
         syncRTC();
+        getSectorsInfo();
         rtc_previous_time = millis();
     }
 
@@ -244,6 +246,18 @@ void syncRTC() {
         String endpoint = TIME_URL_URI;
         String responseRTC = getRequest(endpoint.c_str());
 
+        if (responseRTC != "{}") {
+            Serial.println("RTC updated successfully");
+            RTC_LOOP_TIME = TEN_MINUTES;
+            rtc_sync = true;
+        } else {
+            Serial.println("RTC failed to synchronized");
+            RTC_LOOP_TIME = FIVE_SECONDS;
+            reconnectWiFi();
+            rtc_sync = false;
+            return;
+        }
+
         responseRTC.replace("\n", "");
         responseRTC.trim();
 
@@ -268,15 +282,6 @@ void syncRTC() {
         String dateTime = getDateTime();
 
         Serial.println("DateTime: " + String(dateTime));
-
-        if (responseRTC != "{}") {
-            Serial.println("RTC updated successfully");
-            RTC_LOOP_TIME = TEN_MINUTES;
-        } else {
-            Serial.println("RTC failed to synchronized");
-            RTC_LOOP_TIME = FIVE_SECONDS;
-            reconnectWiFi();
-        }
 
     } else {
         Serial.println("Error in WiFi connection, synchronized clock fail");
@@ -374,8 +379,8 @@ void setSoilMoisture(int pin, int index) {
     if (soilMoistureValuePercent <= 0 || soilMoistureValuePercent > 100) {
         soilMoistureValuePercent = ERROR_VALUE;
     }
-    Serial.println("Soil Humidity value " + String(index) + ": " + String(soilMoistureValue));
-    Serial.println("Soil Humidity percentage "+ String(index) + ": " + String(soilMoistureValuePercent) + "%");
+    Serial.print("Soil Humidity value " + String(index) + ": " + String(soilMoistureValue));
+    Serial.println(" (" + String(soilMoistureValuePercent) + "%)");
     soilMoistureArray[index-1].measure.value = soilMoistureValuePercent;
     soilMoistureArray[index-1].measure.dateTime = getDateTime();
 }
@@ -404,8 +409,8 @@ void readLightValue() {
     int lightValue = analogRead(PIN_LDR);
     int lightValuePercent = map(lightValue, 0, 4095, 0, 100);
 
-    Serial.println("Light value: " + String(lightValue));
-    Serial.println("Light value percentage: " + String(lightValuePercent));
+    Serial.print("Light value: " + String(lightValue));
+    Serial.println(" (" + String(lightValuePercent) + "%)");
 
     ldrSensor.measure.value = lightValuePercent;
     ldrSensor.measure.dateTime = getDateTime();
@@ -596,11 +601,11 @@ void appendSensorJsonObject(StaticJsonDocument<1024> &doc, Sensor sensor) {
     JsonObject sensorDoc = doc.createNestedObject();
     sensorDoc["code"] = sensor.code;
 
-    JsonArray measuresArray = sensorDoc.createNestedArray("measures");
-
-    JsonObject measure = measuresArray.createNestedObject();
+    JsonObject measure = sensorDoc.createNestedObject("measure");
     measure["value"] = sensor.measure.value;
-    measure["dateTime"] = sensor.measure.dateTime;
+    if(rtc_sync == true) {
+        measure["dateTime"] = sensor.measure.dateTime;
+    }
 }
 
 void sendIrrigationEventToServer(const char* sectorId, const char* status) {
@@ -729,7 +734,13 @@ void configWiFi() {
     if (ssid != "" || password != "") {
         WiFi.begin(ssid.c_str(), password.c_str());
         Serial.println("Connecting to WiFi...");
-        delay(FIVE_SECONDS); //Give five seconds to connect to WiFi
+        int retries = 0;
+        int maxRetries = 10;
+        while (WiFi.status() != WL_CONNECTED && retries < maxRetries) {
+            delay(500);
+            retries++;
+        }
+        delay(TEN_SECONDS);
     } else { 
         Serial.println("No values saved for ssid or password");
     }
