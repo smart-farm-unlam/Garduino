@@ -13,17 +13,17 @@ using namespace std;
 
 //------------------------CONSTANTS------------------------
 //PINS
-const int PIN_DHT = 23;
-const int PIN_SOIL_MOISTURE_1 = 35;
-const int PIN_SOIL_MOISTURE_2 = 34;
-const int PIN_SOIL_MOISTURE_3 = 39;
-const int PIN_DS18B20 = 32;
+const int PIN_DHT = 21;
+const int PIN_SOIL_MOISTURE_1 = 33;
+const int PIN_SOIL_MOISTURE_2 = 32;
+const int PIN_SOIL_MOISTURE_3 = 35;
+const int PIN_DS18B20 = 22;
 const int TEMPERATURE_PRECISION = 9;
 const int PIN_VALVE_1 = 15;
 const int PIN_VALVE_2 = 4;
 const int PIN_VALVE_3 = 5;
 const int PIN_VALVE_ANTI_FROST = 18;
-const int PIN_WATER_PUMP = 21;
+const int PIN_WATER_PUMP = 23;
 const int PIN_LDR = 36;
 const int PIN_LED_ESP = 2;
 
@@ -135,9 +135,6 @@ void setup() {
     //Pins configuration
     configPins();
 
-    //Initialize sensors
-    initializeSensors();
-
     //Preferences (Flash Memory)
     preferences.begin("smartFarm", false);
     //Flash File System
@@ -151,6 +148,9 @@ void setup() {
 
     //Retrieved data from server
     getSectorsInfo();
+
+    //Initialize sensors
+    initializeSensors();
 
     //Close preferences
     preferences.end();
@@ -419,7 +419,6 @@ void readLightValue() {
 void irrigationEventResolver() {
     Serial.println("Checking sectors humidity");
 
-    // digitalWrite(PIN_WATER_PUMP, LOW); //Turn off the pump
     boolean hasToActivateWaterPump = false;
 
     for (int i = 0; i < sectorsCount; i++) {
@@ -456,7 +455,7 @@ void irrigationEventResolver() {
 
     if (waterPumpStatus == "ON" && hasToActivateWaterPump == false) {
         Serial.println("All sectors ok, turn off water pump");
-        digitalWrite(PIN_WATER_PUMP, LOW); //turn it off
+        digitalWrite(PIN_WATER_PUMP, LOW); //turn off water pump
         waterPumpStatus = "OFF";
         //reset timers to normal
         MEASUREMENT_TIME = THIRTY_SECONDS;
@@ -468,6 +467,7 @@ void antiFrostEventResolver() {
     Serial.println("Checking ambient temperature");
 
     float temperature = tempSensor.measure.value;
+    //temperature = -2; testing purpose
     
     if (temperature != ERROR_VALUE && temperature < ZERO_DEGRESS) {
         if(antiFrostSystem == "OFF") {
