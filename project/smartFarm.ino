@@ -50,13 +50,13 @@ int FIVE_MINUTES = 5 * ONE_MINUTE;
 int TEN_MINUTES = 10 * ONE_MINUTE;
 
 //Software timer
-int MEASUREMENT_TIME = THIRTY_SECONDS;
+int MEASUREMENT_TIME = TEN_SECONDS;
 unsigned long measurenment_current_time, measurenment_previous_time;
 
-int IRRIGATION_LOOP_TIME = ONE_MINUTE;
+int IRRIGATION_LOOP_TIME = THIRTY_SECONDS;
 unsigned long irrigation_current_time, irrigation_previous_time;
 
-int ANTI_FROST_LOOP_TIME = TWO_MINUTES;
+int ANTI_FROST_LOOP_TIME = THIRTY_SECONDS;
 unsigned long anti_frost_current_time, anti_frost_previous_time;
 
 int RTC_LOOP_TIME = TEN_MINUTES;
@@ -467,7 +467,7 @@ void antiFrostEventResolver() {
     Serial.println("Checking ambient temperature");
 
     float temperature = tempSensor.measure.value;
-    //temperature = -2; testing purpose
+    //temperature = -2; //testing purpose
     
     if (temperature != ERROR_VALUE && temperature < ZERO_DEGRESS) {
         if(antiFrostSystem == "OFF") {
@@ -520,7 +520,7 @@ void getSectorsInfo() {
     Serial.println("-----------------------------------");
     Serial.println("Get Sectors info");
     if (WiFi.status() == WL_CONNECTED) {
-        String endpoint = SERVER_URI + "/sectors/" + FARM_ID + "/crop-types";
+        String endpoint = SERVER_URI + "/sectors/" + FARM_ID + "/crop-types/micro";
         String sectorsData = getRequest(endpoint.c_str());
 
         if(sectorsData == "{}") {
@@ -728,8 +728,8 @@ void configWiFi() {
 
     //TODO remove ssid and password
     //WIFI Settings
-    String ssid = preferences.getString("ssid", "Movistar14");
-    String password = preferences.getString("password", "mate2306");
+    String ssid = preferences.getString("ssid", "Facu-WiFi");
+    String password = preferences.getString("password", "thor1996");
 
     if (ssid != "" || password != "") {
         WiFi.begin(ssid.c_str(), password.c_str());
