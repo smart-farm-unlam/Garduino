@@ -639,7 +639,7 @@ void sendMeasureToServer(Sensor sensor) {
 
     serializeJson(doc, body);
 
-    String endpoint = SERVER_URI + "/sensors/" + FARM_ID + "/events";
+    String endpoint = SERVER_URI + "/sensors/" + FARM_ID;
 
     if (WiFi.status() == WL_CONNECTED) {
         int result = sendRequest(endpoint.c_str(), body);
@@ -671,7 +671,7 @@ void sendAllMeasuresToServer() {
 
     serializeJson(doc, body);
 
-    String endpoint = SERVER_URI + "/sensors/" + FARM_ID + "/events";
+    String endpoint = SERVER_URI + "/sensors/" + FARM_ID;
 
     if (WiFi.status() == WL_CONNECTED) {
         int result = sendRequest(endpoint.c_str(), body);
