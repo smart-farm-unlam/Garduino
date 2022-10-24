@@ -14,16 +14,21 @@ using namespace std;
 //------------------------CONSTANTS------------------------
 //PINS
 const int PIN_DHT = 21;
-const int PIN_SOIL_MOISTURE_1 = 33;
+
+const int PIN_SOIL_MOISTURE_1 = 35;
 const int PIN_SOIL_MOISTURE_2 = 32;
-const int PIN_SOIL_MOISTURE_3 = 35;
+const int PIN_SOIL_MOISTURE_3 = 33;
+
 const int PIN_DS18B20 = 22;
 const int TEMPERATURE_PRECISION = 9;
+
 const int PIN_VALVE_1 = 15;
 const int PIN_VALVE_2 = 4;
 const int PIN_VALVE_3 = 5;
 const int PIN_VALVE_ANTI_FROST = 18;
+
 const int PIN_WATER_PUMP = 23;
+
 const int PIN_LDR = 36;
 const int PIN_LED_ESP = 2;
 
@@ -43,6 +48,7 @@ boolean rtc_sync = false;
 //Time values
 int FIVE_SECONDS = 5000;
 int TEN_SECONDS = 10000;
+int FIFTEEN_SECONDS = 15000;
 int THIRTY_SECONDS = 30000;
 int ONE_MINUTE = 60000;
 int TWO_MINUTES = 2 * ONE_MINUTE;
@@ -53,10 +59,10 @@ int TEN_MINUTES = 10 * ONE_MINUTE;
 int MEASUREMENT_TIME = TEN_SECONDS;
 unsigned long measurenment_current_time, measurenment_previous_time;
 
-int IRRIGATION_LOOP_TIME = THIRTY_SECONDS;
+int IRRIGATION_LOOP_TIME = FIFTEEN_SECONDS;
 unsigned long irrigation_current_time, irrigation_previous_time;
 
-int ANTI_FROST_LOOP_TIME = THIRTY_SECONDS;
+int ANTI_FROST_LOOP_TIME = FIFTEEN_SECONDS;
 unsigned long anti_frost_current_time, anti_frost_previous_time;
 
 int RTC_LOOP_TIME = TEN_MINUTES;
@@ -82,8 +88,10 @@ float hum = ERROR_VALUE;
 const int AIR_VALUE = 3800;
 const int WATER_VALUE = 1250;
 
-//ZERO DEGRESS
+//DEGRESS
 const float ZERO_DEGRESS = 0.0;
+
+boolean mockAntifrostEvent = false;
 
 //------------------------STRUCTS------------------------
 typedef struct {
@@ -127,6 +135,9 @@ Sector sectors[3] = {};
 //AntiFrostSystem
 String antiFrostSystem = "OFF";
 
+//TEST environment
+boolean testEnv = false; 
+
 //------------------------MAIN PROGRAM------------------------
 
 void setup() {
@@ -139,6 +150,7 @@ void setup() {
     preferences.begin("smartFarm", false);
     //Flash File System
     SPIFFS.begin(true);
+    //SPIFFS.remove("/events.txt"); //To remove all retries
 
     //Connect to WiFi
     configWiFi();  
@@ -187,7 +199,7 @@ void loop() {
         antiFrostEventResolver();
         anti_frost_previous_time = millis();
         //Also use this timer to retry lost events
-        retryEvents();
+        //retryEvents();
     }
 
     if ((rtc_current_time - rtc_previous_time) > RTC_LOOP_TIME) {
@@ -343,7 +355,7 @@ void measuresResolver() {
     readSoilMoistureSensors();
     readSoilTemperatureSensors();
     readLightValue();
-    sendMeasuresToServer();
+    sendAllMeasuresToServer();
 }
 
 //Error +-2.5%
@@ -445,9 +457,9 @@ void irrigationEventResolver() {
     }
 
     if(waterPumpStatus == "OFF" && hasToActivateWaterPump == true) {
-        //Timers check every 10 seconds
-        MEASUREMENT_TIME = TEN_SECONDS;
-        IRRIGATION_LOOP_TIME = TEN_SECONDS; 
+        //Timers check every 5 seconds
+        MEASUREMENT_TIME = FIVE_SECONDS;
+        IRRIGATION_LOOP_TIME = FIVE_SECONDS; 
         digitalWrite(PIN_WATER_PUMP, HIGH); //turn on water pump
         Serial.println("Water pump on");
         waterPumpStatus = "ON";
@@ -458,18 +470,28 @@ void irrigationEventResolver() {
         digitalWrite(PIN_WATER_PUMP, LOW); //turn off water pump
         waterPumpStatus = "OFF";
         //reset timers to normal
-        MEASUREMENT_TIME = THIRTY_SECONDS;
-        IRRIGATION_LOOP_TIME = ONE_MINUTE;
+        MEASUREMENT_TIME = TEN_SECONDS;
+        IRRIGATION_LOOP_TIME = FIFTEEN_SECONDS;
     }
 }
 
 void antiFrostEventResolver() {
     Serial.println("Checking ambient temperature");
 
+    float mockedValue = getMockValueBySensor("AT");
+
     float temperature = tempSensor.measure.value;
     //temperature = -2; //testing purpose
+
+    if(mockedValue != -100.0) {
+        temperature = mockedValue;
+        Serial.println("Setting mocked value");
+        tempSensor.measure.value = temperature;
+        tempSensor.measure.dateTime = getDateTime();
+        sendMeasureToServer(tempSensor);
+    }
     
-    if (temperature != ERROR_VALUE && temperature < ZERO_DEGRESS) {
+    if (temperature != ERROR_VALUE && temperature <= ZERO_DEGRESS) {
         if(antiFrostSystem == "OFF") {
             closeIrrigationValves();
             digitalWrite(PIN_VALVE_ANTI_FROST, LOW);    //open the anti_frost valve
@@ -480,11 +502,12 @@ void antiFrostEventResolver() {
             Serial.println("AntiFrost system activated");
             antiFrostSystem = "ON";
             sendAntiFrostEventToServer("ON");
+            ANTI_FROST_LOOP_TIME = FIVE_SECONDS;
         } else {
             Serial.println("Temperature is still below 0°C, AntiFrost system working");
         }
         
-    } else if (temperature == ERROR_VALUE || temperature >= ZERO_DEGRESS) {
+    } else if (temperature == ERROR_VALUE || temperature > ZERO_DEGRESS) {
         //If valve is open closed it
         if(digitalRead(PIN_VALVE_ANTI_FROST) == LOW) {
             digitalWrite(PIN_VALVE_ANTI_FROST, HIGH);   //close the anti_frost valve
@@ -495,6 +518,7 @@ void antiFrostEventResolver() {
             Serial.println("AntiFrost system deactivated");
             antiFrostSystem = "OFF";
             sendAntiFrostEventToServer("OFF");
+            ANTI_FROST_LOOP_TIME = FIFTEEN_SECONDS;
         }
         Serial.println("Ambient temperature is ok.");
     }
@@ -515,6 +539,47 @@ void closeIrrigationValves() {
 }
 
 //------------------------HTTP REQUEST------------------------
+float getMockValueBySensor(String sensorType) {
+    Serial.println("-----------------------------------");
+    Serial.println("Get Mocked sensorType info");
+    float value = -100;
+
+    if (WiFi.status() == WL_CONNECTED) {
+        String endpoint = SERVER_URI + "/sensors/" + sensorType + "/mock";
+        String mockedData = getRequest(endpoint.c_str());
+
+        if(mockedData != "{}") {
+            mockedData.replace("\n", "");
+            mockedData.trim();
+
+            char jsonOutput[768];
+            strcpy(jsonOutput, mockedData.c_str());
+
+            Serial.println("JsonOutput: " + String(jsonOutput));
+
+            StaticJsonDocument<768> doc;
+            DeserializationError err = deserializeJson(doc, jsonOutput);
+
+            if (err) {
+                Serial.print("deserializeJson() failed with code ");
+                Serial.println(err.c_str());
+                return -100.0;
+            }
+
+            String status = doc["status"];
+        
+            if(status == "ON") {
+                value = doc["value"];
+                mockAntifrostEvent = true;
+            } else {
+                mockAntifrostEvent = false;
+                value = -100.0;
+            }
+        }
+    }
+    
+    return value;
+}
 
 void getSectorsInfo() {
     Serial.println("-----------------------------------");
@@ -567,10 +632,32 @@ void getSectorsInfo() {
     }
 }
 
-void sendMeasuresToServer() {
+void sendMeasureToServer(Sensor sensor) {
     char body[1024];
     StaticJsonDocument<1024> doc;
-    appendSensorJsonObject(doc, tempSensor);
+    appendSensorJsonObject(doc, sensor);
+
+    serializeJson(doc, body);
+
+    String endpoint = SERVER_URI + "/sensors/" + FARM_ID + "/events";
+
+    if (WiFi.status() == WL_CONNECTED) {
+        int result = sendRequest(endpoint.c_str(), body);
+        if (result != 200) {
+            saveRetry(endpoint.c_str(), body);
+        }
+    } else {
+        Serial.println("Error Posting measures, cause WiFi connection");
+        saveRetry(endpoint.c_str(), body);
+    }
+}
+
+void sendAllMeasuresToServer() {
+    char body[1024];
+    StaticJsonDocument<1024> doc;
+    if (mockAntifrostEvent == false) {
+        appendSensorJsonObject(doc, tempSensor);
+    }
     appendSensorJsonObject(doc, humiditySensor);
     appendSensorJsonObject(doc, ldrSensor);
 
@@ -682,9 +769,16 @@ int sendRequest(const char* endpoint, const char* body) {
 
     HTTPClient client;
     client.begin(endpoint);
-    client.addHeader("Content-Type", "application/json");   
+    client.addHeader("Content-Type", "application/json");
 
-    int httpCode = client.POST(String(body));
+    int httpCode;
+
+    if(testEnv == true) {
+        Serial.println("\nMock HTTP Response code 200");
+        httpCode = 200;
+    } else {
+        httpCode = client.POST(String(body));
+    }
 
     if (httpCode > 0) {
         Serial.println("HTTP Response code: " +  String(httpCode));
