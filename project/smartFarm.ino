@@ -529,7 +529,7 @@ void closeIrrigationValves() {
     for (int i = 0; i < sectorsCount; i++) {
         //If valve if open is because it started an irrigation event for that sector,
         //so we have to notify that irrigation event off to the server
-        if(digitalRead(IRRIGATION_VALVES[i] == LOW)) {
+        if(digitalRead(IRRIGATION_VALVES[i]) == LOW) {
             Sector sector = sectors[i];
             digitalWrite(IRRIGATION_VALVES[i], HIGH); //turn off valve
             sendIrrigationEventToServer(sector.id.c_str(), "OFF");
