@@ -199,7 +199,7 @@ void loop() {
         antiFrostEventResolver();
         anti_frost_previous_time = millis();
         //Also use this timer to retry lost events
-        //retryEvents();
+        retryEvents();
     }
 
     if ((rtc_current_time - rtc_previous_time) > RTC_LOOP_TIME) {
@@ -481,7 +481,6 @@ void antiFrostEventResolver() {
     float mockedValue = getMockValueBySensor("AT");
 
     float temperature = tempSensor.measure.value;
-    //temperature = -2; //testing purpose
 
     if(mockedValue != -100.0) {
         temperature = mockedValue;
