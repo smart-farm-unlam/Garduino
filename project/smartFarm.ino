@@ -150,7 +150,7 @@ void setup() {
     preferences.begin("smartFarm", false);
     //Flash File System
     SPIFFS.begin(true);
-    //SPIFFS.remove("/events.txt"); //To remove all retries
+    SPIFFS.remove("/events.txt"); //To remove all retries
 
     //Connect to WiFi
     configWiFi();  
@@ -478,7 +478,7 @@ void irrigationEventResolver() {
 void antiFrostEventResolver() {
     Serial.println("Checking ambient temperature");
 
-    float mockedValue = getMockValueBySensor("AT");
+    float mockedValue = getMockValueBySensorCode("AT1");
 
     float temperature = tempSensor.measure.value;
 
@@ -538,13 +538,13 @@ void closeIrrigationValves() {
 }
 
 //------------------------HTTP REQUEST------------------------
-float getMockValueBySensor(String sensorType) {
+float getMockValueBySensorCode(String sensorCode) {
     Serial.println("-----------------------------------");
     Serial.println("Get Mocked sensorType info");
     float value = -100;
 
     if (WiFi.status() == WL_CONNECTED) {
-        String endpoint = SERVER_URI + "/sensors/" + sensorType + "/mock";
+        String endpoint = SERVER_URI + "/sensors/" + sensorCode + "/mock";
         String mockedData = getRequest(endpoint.c_str());
 
         if(mockedData != "{}") {
@@ -821,8 +821,8 @@ void configWiFi() {
 
     //TODO remove ssid and password
     //WIFI Settings
-    String ssid = preferences.getString("ssid", "Facu-WiFi");
-    String password = preferences.getString("password", "thor1996");
+    String ssid = preferences.getString("ssid", "facu-redmi");
+    String password = preferences.getString("password", "facu8716");
 
     if (ssid != "" || password != "") {
         WiFi.begin(ssid.c_str(), password.c_str());
